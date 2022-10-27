@@ -1,0 +1,63 @@
+#:import Window kivy.core.window.Window
+
+<TargetListItem>:
+    size_hint_x: None
+    width: Window.width
+    height: self.minimum_height
+    MDLabel:
+    MDRectangleFlatButton:
+        text: root.text
+        font_size: sp(20)
+        size_hint_y: None
+        # height: sp(25)
+        on_release:
+            root.start_watching()
+    MDLabel:
+
+<HomeScreen>:
+    name: "HomeScreen"
+    target_list_view: target_list
+    connection_lbl: connection_lbl
+	MDFloatLayout:
+        MDBoxLayout:
+            orientation: 'vertical'
+            height: self.minimum_height
+            width: self.minimum_width
+            pos_hint: {'center_x': 0.5,'center_y': 0.5}
+            # spacing: "56dp"
+            padding: "70dp"
+
+            MDRaisedButton:
+                text: "Stop" if root.running else "Start"
+                size_hint: None, None
+                height: dp(300)
+                width: dp(400)
+                font_size: sp(30)
+                md_bg_color: (1, 0, 0) if root.running else (0, 1, 0)
+                # type: "large"
+                pos_hint: {'center_x': 0.5,'center_y': 0.5}
+                # background_color: (1, 0, 0) if root.running else (0, 1, 0)
+                on_release:
+                    root.stop() if root.running else root.start()
+            MDLabel:
+                id: connection_lbl
+                font_size: sp(30)
+                size_hint_y: None
+                # size_hint: None, None
+                pos_hint: {'center_x': 0.5,'center_y': 0.5}
+
+            TargetListView:
+                id: target_list
+                viewclass: "TargetListItem"
+                size_hint_x: None
+                width: Window.width
+
+                RecycleBoxLayout:
+                    default_size: None, dp(56)
+                    default_size_hint: None, None
+                    size_hint: 1, None
+                    spacing: sp(5)
+                    height: self.minimum_height
+                    orientation: 'vertical'
+
+                    

@@ -1,0 +1,44 @@
+#:import Window kivy.core.window.Window
+
+<MDRectangleFlatIconButton>:
+    font_size: sp(15)
+
+<ControllerScreen>:
+    name: "ControllerScreen"
+    img: img
+    MDFloatLayout:
+        MDBoxLayout:
+            orientation: "vertical"
+            MDBoxLayout:
+                size_hint_y: None
+                height: self.minimum_height
+                pos_hint: {'center_x': 0.5,'center_y': 0.5}
+
+                MDLabel:
+
+                MDRectangleFlatIconButton:
+                    text: "Save"
+                    icon: "content-save"
+                    on_release:
+                        root.save_img()
+
+                MDRectangleFlatIconButton:
+                    text: "Resume" if root.paused else "Pause"
+                    icon: "play" if root.paused else "pause"
+                    on_release:
+                        root.resume() if root.paused else root.pause()
+
+                MDRectangleFlatIconButton:
+                    text: "Stop"
+                    icon: "stop"
+                    text_color: "red"
+                    line_color: "red"
+                    icon_color: "red"
+                    on_release:
+                        root.close()
+
+                MDLabel:
+
+            Image:
+                id: img
+                source: ""
