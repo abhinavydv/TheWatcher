@@ -156,7 +156,7 @@ class ScreenReader(Socket):
         x, y, width, height = window.get_geometry()
         pb: Pixbuf = Gdk.pixbuf_get_from_window(window, x, y, width, height)
         img = self.pixbuf2image(pb)
-        img = img.resize((img.size[0]*2//3, img.size[1]*2//3), Image.ANTIALIAS)
+        img = img.resize((img.size[0]//3, img.size[1]//3), Image.ANTIALIAS)
         return img
 
     def take_screenshot_other(self) -> Image:

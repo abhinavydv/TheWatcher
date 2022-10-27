@@ -1,13 +1,10 @@
+from kivy.clock import Clock
 from kivy.lang import Builder
 from kivy.properties import BooleanProperty, ObjectProperty, StringProperty
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.recycleview import RecycleView
 from kivy.uix.screenmanager import Screen
-from kivy.uix.widget import Widget
-
 from kivymd.uix.boxlayout import MDBoxLayout
-from kivymd.uix.button import MDRectangleFlatButton
-from kivymd.uix.widget import MDWidget
 
 from watcher import Watcher
 from controllerscreen import ControllerScreen
@@ -67,9 +64,9 @@ class HomeScreen(Screen):
     def start(self):
         self.target_list_view.homescreen = self
         self.target_list_view.watcher = self.watcher
+        self.running = True
         Thread(target=self.start_watcher).start()
         Thread(target=self.run_update_loop).start()
-        self.running = True
 
     def start_watcher(self):
         if not self.watcher.start():
@@ -94,7 +91,8 @@ class HomeScreen(Screen):
             return
         self.updating = True
         while self.updating:
-            if self.running and "watcher" in dir(self):
+            # logging.debug(self.watcher.running)
+            if self.running:
                 self.update()
             sleep(0.1)
 
@@ -103,6 +101,6 @@ class HomeScreen(Screen):
         return super().on_leave(*args)
 
     def on_enter(self, *args):
-        Thread(target=self.run_update_loop).start()
+        Clock.schedule_once(lambda dt: Thread(target=self.run_update_loop).start(), 1)
         return super().on_enter(*args)
-        
+
