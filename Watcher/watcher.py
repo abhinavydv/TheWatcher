@@ -3,10 +3,11 @@ from typing import List
 from Base.socket_base import Socket, Config
 from socket import socket, AF_INET, SOCK_STREAM
 from threading import Lock, Thread
-from Base.settings import ALREADY_CONNECTED, SERVER_PORT, SERVER_ADDRESS, \
-    STOP_WATCHING, WATCHER, WATCHER_SCREEN_READER, SEND_TARGET_LIST
+from Base.settings import SERVER_PORT, SERVER_ADDRESS
+from Base.constants import ALREADY_CONNECTED, CONTROL_KEYBOARD, STOP_WATCHING, WATCHER, WATCHER_SCREEN_READER, SEND_TARGET_LIST
 import logging
-from pynput.keyboard import Listener
+from pynput.keyboard import Listener, Key, KeyCode
+from queue import Queue, Empty
 
 
 class Watcher(Socket):
@@ -174,21 +175,71 @@ class Controller(Socket):
 
     def __init__(self, code):
         super().__init__(SERVER_ADDRESS, SERVER_PORT)
+        self.code = code
+        self.control_lock = Lock()
+        self.keyboard_controller = KeyboardController(self.socket, self.control_lock)
+        self.watcher: Watcher = None
 
     def start(self):
-        pass
+        logging.info("Starting watcher controller")
+        self.keyboard_controller.start()
+        self.running = True
+        Thread(target=self.run).start()
 
     def run(self):
-        pass
+        while self.running:
+            self.keyboard_controller.update()
+            self.running = self.watcher.running
+        self.stop()
 
     def stop(self):
-        pass
+        self.running = False
+        self.keyboard_controller.stop()
 
 
-class KeyboardController(object):
+class KeyboardController(Socket):
 
-    def __init__(self) -> None:
-        pass
+    def __init__(self, skt: socket, control_lock: Lock) -> None:
+        super().__init__(SERVER_ADDRESS, SERVER_PORT, skt)
+        self.keys = Queue(0)    # Format example: p345 (pressed code 345) r345 (released code 345)
+        self.control_lock = control_lock
+
+    def start(self):
+        logging.info("Starting Keyboard Controller")
+        self.listener = Listener(on_press=self.on_press)
+        self.listener.start()
+
+    def stop(self):
+        self.listener.stop()
+
+    def on_press(self, key):
+        # print(type(key))
+        if isinstance(key, Key):
+            logging.debug((key.name, key.value))
+        elif isinstance(key, KeyCode):
+            logging.debug((key.vk, key.combining, key.char))
+
+    def on_release(self, key):
+        if isinstance(key, Key):
+            logging.debug(key.name, key.value)
+        elif isinstance(key, KeyCode):
+            logging.debug(key.vk, key.combining, key.char)
+
+    def update(self):
+        if not self.keys.empty():
+            with self.control_lock:
+                self.send_data(CONTROL_KEYBOARD.encode(self.FORMAT))
+                keys = self.get_keys()
+                self.send_data(" ".join(keys).encode(self.FORMAT))
+
+    def get_keys(self):
+        keys = []
+        while not self.keys.empty():
+            try:
+                keys.append(self.keys.get_nowait())
+            except Empty:
+                break
+        return keys
 
 
 if __name__ == "__main__":

@@ -3,10 +3,19 @@
 <MDRectangleFlatIconButton>:
     font_size: sp(15)
 
+# <MouseController>:
+#     mouse_pos_lbl: mouse_pos_lbl
+
 <ControllerScreen>:
     name: "ControllerScreen"
+    status_bar: status_bar
+    mouse_pos_lbl: mouse_pos_lbl
+    img_pos_lbl: img_pos_lbl
+    # img_scatter: img_scatter
+    float_layout: float_layout
     img: img
     MDFloatLayout:
+        id: float_layout
         MDBoxLayout:
             orientation: "vertical"
             MDBoxLayout:
@@ -39,7 +48,26 @@
 
                 MDLabel:
 
-            ScatterLayout:
-                Image:
-                    id: img
-                    source: ""
+            # ScatterLayout:
+            #     id: img_scatter
+            #     do_rotation: False
+            Image:
+                id: img
+                source: ""
+                allow_stretch: True
+
+            MDBoxLayout:
+                id: status_bar
+                # height: self.minimum_height
+                size_hint_y: None
+                MDLabel:
+                    size_hint_y: None
+                    font_size: sp(15)
+                    id: mouse_pos_lbl
+                    size: self.texture_size
+                MDLabel:
+                    size_hint_y: None
+                    font_size: sp(15)
+                    size: self.texture_size
+                    id: img_pos_lbl
+

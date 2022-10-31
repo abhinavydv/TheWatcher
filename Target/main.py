@@ -1,12 +1,15 @@
-from time import sleep
+from Base.constants import ALREADY_CONNECTED, TARGET_SCREEN_READER, \
+    TARGET_CONTROLLER, DISCONNECT
+from Base.settings import IMG_FORMAT, SERVER_PORT, SERVER_ADDRESS
 from Base.socket_base import Socket, Config
-from socket import socket, AF_INET, SOCK_STREAM
-from PIL import Image
-from threading import Thread
-from pynput.keyboard import Controller
-from Base.settings import ALREADY_CONNECTED, IMG_FORMAT, SERVER_PORT, SERVER_ADDRESS, \
-    TARGET_SCREEN_READER, TARGET_CONTROLLER, DISCONNECT
 import logging
+from PIL import Image
+from pynput.keyboard import Controller as KeyController
+from pynput.mouse import Controller as MouseController
+from queue import Queue, Empty
+from socket import socket, AF_INET, SOCK_STREAM
+from threading import Thread
+from time import sleep
 import traceback
 
 try:
@@ -22,8 +25,6 @@ class Target(Socket):
 
     def __init__(self) -> None:
         super().__init__(SERVER_ADDRESS, SERVER_PORT)
-        self.key_controller = Controller()
-
         self.watched = False    # Set to True if screenshot is to be sent
         self.controlling = False
 
@@ -156,7 +157,7 @@ class ScreenReader(Socket):
         x, y, width, height = window.get_geometry()
         pb: Pixbuf = Gdk.pixbuf_get_from_window(window, x, y, width, height)
         img = self.pixbuf2image(pb)
-        img = img.resize((img.size[0]//3, img.size[1]//3), Image.ANTIALIAS)
+        img = img.resize((img.size[0]//2, img.size[1]//2), Image.ANTIALIAS)
         return img
 
     def take_screenshot_other(self) -> Image:
@@ -187,6 +188,31 @@ class ScreenReader(Socket):
 
 class Controller(Socket):
     pass
+
+
+class Keyboard(object):
+
+    def __init__(self) -> None:
+        self.key_controller = KeyController()
+
+
+class Mouse(object):
+
+    def __init__(self) -> None:
+        self.mouse_controller = MouseController()
+        self.clicks = Queue()
+
+    def update(self):
+        clicks = []
+
+    def get_keys(self):
+        keys = []
+        while not self.keys.empty():
+            try:
+                keys.append(self.clicks.get_nowait())
+            except Empty:
+                break
+        return keys
 
 
 if __name__ == "__main__":

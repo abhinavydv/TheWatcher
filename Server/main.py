@@ -1,13 +1,13 @@
 import errno
-import os
 from time import sleep, time
 from typing import Dict
 from Base.socket_base import Socket
 from socket import SHUT_RDWR, socket
 from threading import Thread
-from Base.settings import ALREADY_CONNECTED, SERVER_PORT, SERVER_ADDRESS, STOP_WATCHING, TARGET_RUNNING, \
+from Base.settings import SERVER_PORT, SERVER_ADDRESS
+from Base.constants import STOP_WATCHING, TARGET_RUNNING, \
     TARGET_SCREEN_READER, TARGET_CONTROLLER, DISCONNECT, TARGET_WAITING, WATCHER, WATCHER_CONTROLLER,\
-        WATCHER_SCREEN_READER, SEND_TARGET_LIST
+        WATCHER_SCREEN_READER, SEND_TARGET_LIST, ALREADY_CONNECTED
 import logging
 
 
