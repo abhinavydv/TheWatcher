@@ -1,11 +1,12 @@
 import errno
+from queue import Queue
 from time import sleep, time
-from typing import Dict
+from typing import Dict, List
 from Base.socket_base import Socket
 from socket import SHUT_RDWR, socket
 from threading import Thread
 from Base.settings import SERVER_PORT, SERVER_ADDRESS
-from Base.constants import STOP_WATCHING, TARGET_RUNNING, \
+from Base.constants import CONTROL_MOUSE, STOP_WATCHING, TARGET_RUNNING, \
     TARGET_SCREEN_READER, TARGET_CONTROLLER, DISCONNECT, TARGET_WAITING, WATCHER, WATCHER_CONTROLLER,\
         WATCHER_SCREEN_READER, SEND_TARGET_LIST, ALREADY_CONNECTED
 import logging
@@ -20,6 +21,7 @@ class Server(Socket):
         self.targets: Dict[str, Socket] = {}   # List of access codes of all targets available for watching
         self.target_screens: Dict[str, Socket] = {} # Screen readers of all targets which are being watched
         self.target_controllers: Dict[str, Socket] = {} # Controllers of all targets which are being watched
+        self.clicks: Dict[str, Queue[bytes]] = {}      # mapping for target and clicks
         self.watchers: Dict[str, Socket] = {}  # access codes and sockets of all watchers
         self.screen_watchers: Dict[str, Socket] = {}
         self.controller_watchers: Dict[str, Socket] = {}
@@ -56,7 +58,7 @@ class Server(Socket):
             return
 
         if client_t == b'Hi!':
-            self.handle_main_client(client)
+            self.handle_main_target_client(client)
         elif client_t == TARGET_SCREEN_READER.encode(self.FORMAT):
             self.handle_target_screen_reader_client(client)
         elif client_t == TARGET_CONTROLLER.encode(self.FORMAT):
@@ -75,7 +77,7 @@ class Server(Socket):
             raise Exception(f"{client_t} is not a valid type")
 
 
-    def handle_main_client(self, client: Socket):
+    def handle_main_target_client(self, client: Socket):
         logging.info("Main Target client connected")
         code = client.recv_data().decode(self.FORMAT)
         if code in self.targets:
@@ -131,16 +133,47 @@ class Server(Socket):
         del self.target_screens[code]
         self.remove_target(code)
 
+    # fix this multiple watchers disconnect when one of them disconnects
     def remove_target(self, code):
         if code in self.targets:
             if self.targets[code].watchers > 0:
                 pass
             del self.targets[code]
 
-    def handle_target_controller_client(self, client: Socket):
-        code = client.recv_data().decode(self.FORMAT)
-        self.target_controllers[code] = client
-        client.send_data(b"OK")
+    def handle_target_controller_client(self, target: Socket):
+        code = target.recv_data().decode(self.FORMAT)
+        if code in self.target_controllers:
+            logging.info("Not allowing target controller {code} to connect as it is already connected")
+            target.send_data(ALREADY_CONNECTED.encode(self.FORMAT))
+            target.socket.close()
+            return False
+        self.target_controllers[code] = target
+        self.clicks[code] = Queue(0)
+        target.send_data(b"OK")
+
+        running = True
+        while running and self.running:
+
+            try:
+                # handle mouse events
+                if not self.clicks[code].empty():
+                    target.send_data(CONTROL_MOUSE.encode(self.FORMAT))
+                    target.send_data(self.clicks[code].get())
+                    target.recv_data()    # reveive 'OK'
+            except (BrokenPipeError, ConnectionResetError):
+                logging.info(f"Connection to target controller client {code} failed unexpectedly. Removing it.")
+                break
+
+            try:
+                running = self.targets[code].running
+            except KeyError:
+                break
+            sleep(0.001)
+
+        target.socket.close()
+        del self.target_controllers[code]
+        if code in self.targets:
+            self.targets[code].running = False
 
     def handle_main_watcher_client(self, watcher: Socket):
         logging.info("Main Watcher client connected")
@@ -253,7 +286,42 @@ class Server(Socket):
                 logging.info(f"Removing target screen reader client {code} as no watcher is watching it.")
 
     def handle_watcher_controller_client(self, watcher: Socket):
-        pass
+        logging.info(f"Watcher controller client connected")
+        try:
+            code = watcher.recv_data().decode(self.FORMAT)
+            target_code = watcher.recv_data().decode(self.FORMAT)
+            watcher.send_data(b"OK")
+        except (BrokenPipeError, ConnectionResetError):
+            logging.debug("Watcher screen reader disconnected. Removing it and stopping watching")
+            return
+
+        running = True
+        while running and self.running:
+            try:
+                if target_code not in self.targets:
+                    watcher.socket.close()
+                    break
+                self.handle_watcher_controllers(watcher, target_code)
+            except (BrokenPipeError, ConnectionResetError):
+                logging.debug("Controller disconnected. Removing it and stopping watching")
+                break
+
+            try:
+                running = self.watchers[code].running
+            except KeyError:
+                logging.debug("Watcher disconnected. Removing controller")
+                watcher.socket.close()
+                break
+
+    def handle_watcher_controllers(self, watcher: Socket, target_code):
+        control_type = watcher.recv_data().decode(self.FORMAT)
+
+        if control_type == CONTROL_MOUSE:
+            clicks = watcher.recv_data()
+            if target_code in self.target_controllers:
+                self.clicks[target_code].put(clicks)
+
+        watcher.send_data(b"OK")
 
     def stop(self):
         self.running = False

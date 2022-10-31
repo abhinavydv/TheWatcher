@@ -1,10 +1,13 @@
+from Base.socket_base import Socket
+from Base.settings import SERVER_ADDRESS, SERVER_PORT
 from datetime import datetime
 from io import BytesIO
 import logging
 import os
 from queue import Queue
 from random import randint
-from threading import Thread
+from socket import socket
+from threading import Lock, Thread
 from time import sleep
 from typing import Tuple
 from watcher import Watcher
@@ -42,8 +45,6 @@ class ControllerScreen(Screen):
         self.code = code
         self.watcher = watcher
         self.running = False
-        self.mouse_controller = MouseController()
-        self.mouse_controller.controller = self
 
     def resume(self):
         self.run_schedule = Clock.schedule_interval(self.run, 0.05)
@@ -64,29 +65,27 @@ class ControllerScreen(Screen):
         self.img_pos_lbl.text = str(self.img.to_window(*self.img.pos))
         if "img" in dir(self.watcher.screen_reader):
             img_io = BytesIO(self.watcher.screen_reader.img)
-            self.ci = CoreImage(img_io, ext="jpg")
+            try:
+                self.ci = CoreImage(img_io, ext="jpg")
+            except Exception:
+                self.stop()
             self.img.texture = self.ci.texture
 
     def start(self):
         logging.info(f"Watching {self.code}")
         self.watcher.watch(self.code)
+        self.mouse_controller = self.watcher.controller.mouse_controller
         self.running = True
         self.run_schedule = Clock.schedule_interval(self.run, 0.05)
-        self.mouse_controller.start()
-        Thread(target=self.run_update_loop).start()
-
-    def run_update_loop(self):
-        while self.running:
-            self.mouse_controller.update()
-            sleep(0.01)
+        Window.bind(mouse_pos=self.mouse_controller.update_mouse_pos)
 
     def on_touch_down(self, touch: MouseMotionEvent):
-        # logging.debug(str(self.img.norm_image_size))
-        # logging.debug(str(self.img.center_x - self.img.norm_image_size[0]/2))
-        # logging.debug(str(self.img.center_y - self.img.norm_image_size[1]/2))
+        if not self.running:
+            return
         img_pos = [(self.img.center_x - self.img.norm_image_size[0]/2), (self.img.center_y - self.img.norm_image_size[1]/2)]
         click_pos = [(touch.pos[0]-img_pos[0])/self.img.norm_image_size[0], (touch.pos[1]-img_pos[1])/self.img.norm_image_size[1]]
-        logging.debug(str(click_pos))
+        if not (0 <= click_pos[0] <= 1 and 0 <= click_pos[1] <= 1):
+            return
         if touch.button == "left":
             self.mouse_controller.clicks.put(("left", click_pos))
         elif touch.button == "right":
@@ -97,7 +96,7 @@ class ControllerScreen(Screen):
         self.run_schedule.cancel()
         if self.watcher.watching:
             self.watcher.stop_watching()
-        self.mouse_controller.stop()
+        Window.unbind(mouse_pos=self.mouse_controller.update_mouse_pos)
         # logging.info(f"Watching stopped")
 
     def close(self):
@@ -112,30 +111,3 @@ class ControllerScreen(Screen):
         # logging.info("Leaving ControllerScreen")
         return super().on_leave(*args)
 
-
-class MouseController(object):
-
-    def __init__(self) -> None:
-        self.clicks = Queue(0)
-        self.pos: Tuple[int, int] = (0, 0)
-        self.controller: ControllerScreen = None
-
-    def start(self):
-        self.mouse_pos_lbl = self.controller.mouse_pos_lbl
-        Window.bind(mouse_pos=self.update_mouse_pos)
-
-    def update_mouse_pos(self, _, pos):
-        self.pos = pos
-        self.mouse_pos_lbl.text = str(pos)
-
-    def get_clicks(self):
-        l = []
-        while not self.clicks.empty():
-            l.append(self.clicks.get_nowait())
-        return l
-
-    def update(self):
-        pass
-
-    def stop(self):
-        Window.unbind(mouse_pos=self.update_mouse_pos)

@@ -1,13 +1,14 @@
-from Base.constants import ALREADY_CONNECTED, TARGET_SCREEN_READER, \
+from Base.constants import ALREADY_CONNECTED, CONTROL_MOUSE, TARGET_SCREEN_READER, \
     TARGET_CONTROLLER, DISCONNECT
 from Base.settings import IMG_FORMAT, SERVER_PORT, SERVER_ADDRESS
 from Base.socket_base import Socket, Config
 import logging
 from PIL import Image
 from pynput.keyboard import Controller as KeyController
-from pynput.mouse import Controller as MouseController
+from pynput.mouse import Controller as MouseController, Button as MouseButton
 from queue import Queue, Empty
 from socket import socket, AF_INET, SOCK_STREAM
+import subprocess
 from threading import Thread
 from time import sleep
 import traceback
@@ -46,8 +47,23 @@ class Target(Socket):
         logging.info("Stoping screen reader client")
 
     def start_controller(self):
+        self.controller = Controller()
+        self.controlling = self.controller.init()
+        Thread(target=self.controller.run_update_loop).start()
+
+        if not self.controlling:
+            logging.info("Controller cannot connect to server. " + 
+            "Either already connected or got disconnected after connection")
+
         while self.controlling:
-            sleep(1)
+            try:
+                self.controlling = self.controller.control()
+            except (BrokenPipeError, ConnectionResetError):
+                logging.info("Controller client disconnected")
+                break
+            sleep(0.001)
+            # logging.debug(str(self.controlling))
+        self.controller.stop()
         logging.info("Stoping controller client")
 
     def control(self):
@@ -101,6 +117,8 @@ class Target(Socket):
     def stop(self):
         self.running = False
         self.controlling = False
+        if "controller" in dir(self):
+            self.controller.stop()
 
 
 class ScreenReader(Socket):
@@ -187,7 +205,45 @@ class ScreenReader(Socket):
 
 
 class Controller(Socket):
-    pass
+    
+    def __init__(self) -> None:
+        super().__init__(SERVER_ADDRESS, SERVER_PORT)
+
+        self.config = Config()
+        self.mouse = Mouse()
+        self.keyboard = Keyboard()
+
+    def init(self) -> bool:
+        self.socket.connect(self.addr)
+        self.send_data(TARGET_CONTROLLER.encode(self.FORMAT))
+        self.send_data(self.config.code.encode(self.FORMAT))
+        data = self.recv_data()
+        if data == b"OK":
+            self.running = True
+            return True
+        elif data == ALREADY_CONNECTED:
+            return False
+        return False
+
+    def control(self):
+        control_type = self.recv_data().decode(self.FORMAT)
+
+        if control_type == CONTROL_MOUSE:
+            click = self.recv_data().decode(self.FORMAT)
+            # logging.debug(click)
+            self.mouse.clicks.put(click)
+            self.send_data(b"OK")
+        return True
+
+    def run_update_loop(self):
+        logging.info("Starting update loop")
+        self.running = True
+        while self.running:
+            self.mouse.update()
+            sleep(0.001)
+
+    def stop(self):
+        self.running = False
 
 
 class Keyboard(object):
@@ -201,18 +257,41 @@ class Mouse(object):
     def __init__(self) -> None:
         self.mouse_controller = MouseController()
         self.clicks = Queue()
+        self.screen_size = self.get_screen_size()
+        logging.debug(self.screen_size)
 
     def update(self):
-        clicks = []
+        if self.clicks.empty():
+            return
+        click = eval(self.clicks.get())
+        logging.debug(str(click))
+        btn = click[0]
+        pos = click[1]
+        self.mouse_controller.position = pos[0]*self.screen_size[0], (1-pos[1])*self.screen_size[1]
+        if btn == "left":
+            self.mouse_controller.click(MouseButton.left)
+            logging.debug("left click")
+        elif btn == "left":
+            self.mouse_controller.click(MouseButton.right)
 
-    def get_keys(self):
-        keys = []
-        while not self.keys.empty():
+
+    def get_clicks(self):
+        clicks = []
+        while not self.clicks.empty():
             try:
-                keys.append(self.clicks.get_nowait())
+                clicks.append(self.clicks.get_nowait())
             except Empty:
                 break
-        return keys
+        return clicks
+
+    def get_screen_size(self):
+        cmd = ['xrandr']
+        cmd2 = ['grep', '*']
+        xrandr = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+        grep = subprocess.Popen(cmd2, stdin=xrandr.stdout, stdout=subprocess.PIPE)
+        res, junk = grep.communicate()
+        resolution = res.split()[0].decode("utf-8")
+        return [int(i) for i in resolution.split('x')]
 
 
 if __name__ == "__main__":

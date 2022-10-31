@@ -1,10 +1,10 @@
 from time import sleep
-from typing import List
+from typing import List, Tuple
 from Base.socket_base import Socket, Config
 from socket import socket, AF_INET, SOCK_STREAM
 from threading import Lock, Thread
 from Base.settings import SERVER_PORT, SERVER_ADDRESS
-from Base.constants import ALREADY_CONNECTED, CONTROL_KEYBOARD, STOP_WATCHING, WATCHER, WATCHER_SCREEN_READER, SEND_TARGET_LIST
+from Base.constants import ALREADY_CONNECTED, CONTROL_KEYBOARD, CONTROL_MOUSE, STOP_WATCHING, WATCHER, WATCHER_CONTROLLER, WATCHER_SCREEN_READER, SEND_TARGET_LIST
 import logging
 from pynput.keyboard import Listener, Key, KeyCode
 from queue import Queue, Empty
@@ -173,28 +173,57 @@ class ScreenReader(Socket):
 
 class Controller(Socket):
 
-    def __init__(self, code):
+    def __init__(self, target_code):
         super().__init__(SERVER_ADDRESS, SERVER_PORT)
-        self.code = code
+        self.target_code = target_code
         self.control_lock = Lock()
-        self.keyboard_controller = KeyboardController(self.socket, self.control_lock)
+        # self.keyboard_controller = KeyboardController(self.socket, self.control_lock)
+        self.mouse_controller = MouseController(self.socket, self.control_lock)
         self.watcher: Watcher = None
+        self.config = Config()
 
     def start(self):
         logging.info("Starting watcher controller")
-        self.keyboard_controller.start()
+        # self.keyboard_controller.start()
+        # self.socket.connect(self.addr)
+        # self.send_data(WATCHER_CONTROLLER.encode(self.FORMAT))
+        # self.running = True
+        # Thread(target=self.run).start()
+
+        try:
+            self.socket.connect(self.addr)
+        except (ConnectionRefusedError, TimeoutError):
+            logging.fatal("Cannot connect to server. Aborting")
+            self.stop()
+            return
+        logging.info("Connected to server")
+
+        self.mouse_controller.start()
+        try:
+            self.send_data(WATCHER_CONTROLLER.encode(self.FORMAT))
+            self.send_data(self.config.code.encode(self.FORMAT))
+            self.send_data(self.target_code.encode(self.FORMAT))
+            self.recv_data().decode(self.FORMAT)  # receive "OK"
+        except (BrokenPipeError, ConnectionResetError):
+            # logging.debug(traceback.format_exc())
+            logging.fatal("Connection to server closed unexpectedly. Aborting")
+            self.stop()
+            return
+
         self.running = True
-        Thread(target=self.run).start()
+        self.run()
 
     def run(self):
         while self.running:
-            self.keyboard_controller.update()
+            # self.keyboard_controller.update()
+            self.mouse_controller.update()
+            sleep(0.001)
             self.running = self.watcher.running
         self.stop()
 
     def stop(self):
         self.running = False
-        self.keyboard_controller.stop()
+        # self.keyboard_controller.stop()
 
 
 class KeyboardController(Socket):
@@ -240,6 +269,40 @@ class KeyboardController(Socket):
             except Empty:
                 break
         return keys
+
+
+class MouseController(Socket):
+
+    def __init__(self, socket: socket, lock: Lock) -> None:
+        super().__init__(SERVER_ADDRESS, SERVER_PORT, socket)
+        self.clicks = Queue(0)
+        self.pos: Tuple[int, int] = (0, 0)
+        self.control_lock = lock
+
+    def start(self):
+        pass
+
+    def update_mouse_pos(self, _, pos):
+        self.pos = pos
+
+    def get_clicks(self):
+        l = []
+        while not self.clicks.empty():
+            l.append(self.clicks.get_nowait())
+        return l
+
+    def update(self):
+        if self.clicks.empty():
+            return
+        click = self.clicks.get_nowait()
+        logging.debug(click)
+        with self.control_lock:
+            self.send_data(CONTROL_MOUSE.encode(self.FORMAT))
+            self.send_data(str(click).encode(self.FORMAT))
+            self.recv_data()   # Receive acknowledgement
+
+    def stop(self):
+        pass
 
 
 if __name__ == "__main__":
