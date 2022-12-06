@@ -1,5 +1,6 @@
 from kivy.config import Config
-Config.set('input', 'mouse', 'mouse,multitouch_on_demand')
+# disable red dot that appeared on right click
+Config.set('input', 'mouse', 'mouse,multitouch_on_demand')  
 
 from kivymd.app import MDApp
 from kivy.uix.screenmanager import ScreenManager

@@ -6,6 +6,7 @@ from random import randint
 import traceback
 from watcher import Watcher
 
+# kivy imoprts
 from kivy.clock import Clock
 from kivy.core.image import Image as CoreImage
 from kivy.core.window import Window
@@ -15,11 +16,12 @@ from kivy.properties import BooleanProperty, ObjectProperty
 from kivy.uix.image import Image
 from kivy.uix.scatterlayout import ScatterLayout
 from kivy.uix.screenmanager import Screen
-from kivy.uix.widget import Widget
 
+# kivymd imports
 from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.floatlayout import MDFloatLayout
 from kivymd.uix.label import MDLabel
+from kivymd.toast import toast
 
 
 Builder.load_file("controllerscreen.kv")
@@ -56,17 +58,24 @@ class ControllerScreen(Screen):
             self.ci.save(f"images/img_{file}_{randint(0, 100000)}.jpg")
 
     def run(self, _):
-        self.img_pos_lbl.text = str(self.img.to_window(*self.img.pos))
+        """
+            Update the target screen image
+        """
+        # self.img_pos_lbl.text = str(self.img.to_window(*self.img.pos))
         if "img" in dir(self.watcher.screen_reader):
             img_io = BytesIO(self.watcher.screen_reader.img)
             try:
                 self.ci = CoreImage(img_io, ext="jpg")
             except Exception:
                 logging.error(traceback.format_exc())
-                self.stop()
+                toast("Image not received completely. Watching stopped")
+                self.close()
             self.img.texture = self.ci.texture
 
     def start(self):
+        """
+            Start watching and controlling the target
+        """
         logging.info(f"Watching {self.code}")
         self.watcher.watch(self.code)
         self.mouse_controller = self.watcher.controller.mouse_controller
@@ -75,9 +84,18 @@ class ControllerScreen(Screen):
         Window.bind(mouse_pos=self.mouse_controller.update_mouse_pos)
 
     def on_touch_down(self, touch: MouseMotionEvent):
+        """
+            As of now only left and right mouse clicks are supported 
+            (No hold and drag or any other motion or button click)
+            TODO: simulate mouse button down in on_touch_down
+                  and mouse button up in on_touch_up. In on_touch_move
+                  only move target's mouse pointer.
+        """
         if not self.running:
             return
         img_pos = [(self.img.center_x - self.img.norm_image_size[0]/2), (self.img.center_y - self.img.norm_image_size[1]/2)]
+        
+        # get relative click position (0, 0) is bottom left and (1, 1) is top right of target screen
         click_pos = [(touch.pos[0]-img_pos[0])/self.img.norm_image_size[0], (touch.pos[1]-img_pos[1])/self.img.norm_image_size[1]]
         if not (0 <= click_pos[0] <= 1 and 0 <= click_pos[1] <= 1):
             return
@@ -87,12 +105,12 @@ class ControllerScreen(Screen):
             self.mouse_controller.clicks.put(("right", click_pos))
 
     def stop(self):
+        # stop watching the target
         self.running = False
         self.run_schedule.cancel()
         if self.watcher.watching:
             self.watcher.stop_watching()
         Window.unbind(mouse_pos=self.mouse_controller.update_mouse_pos)
-        # logging.info(f"Watching stopped")
 
     def close(self):
         self.manager.remove_widget(self)

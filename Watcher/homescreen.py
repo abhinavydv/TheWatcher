@@ -16,6 +16,9 @@ Builder.load_file("homescreen.kv")
 
 
 class TargetListItem(MDBoxLayout):
+    """
+        Shows info about one item in target list
+    """
     text = StringProperty("")
     homescreen = ObjectProperty(None)
     code = StringProperty("")
@@ -32,6 +35,9 @@ class TargetListItem(MDBoxLayout):
 
 
 class TargetListView(RecycleView):
+    """
+        Widget that displays a list of targets
+    """
     homescreen = ObjectProperty(None)
 
     def __init__(self, **kwargs):
@@ -46,9 +52,6 @@ class TargetListView(RecycleView):
             self.homescreen.connection_lbl.text = "No target connected"
         else:
             self.homescreen.connection_lbl.text = ""
-        # logging.debug(str(self.data))
-        # logging.debug(str(self.data))
-        # print(self.data)
 
 
 class HomeScreen(Screen):
@@ -62,7 +65,10 @@ class HomeScreen(Screen):
         self.updating = False
 
     def start(self):
+        # start the watcher
         self.target_list_view.homescreen = self
+
+        # give reference of watcher to the target list view
         self.target_list_view.watcher = self.watcher
         self.running = True
         Thread(target=self.start_watcher).start()
@@ -74,16 +80,17 @@ class HomeScreen(Screen):
         else:
             self.connection_lbl.text = ""
 
-
     def stop(self):
+        # stop the watcher
         self.watcher.stop()
         self.running = False
         self.updating = False
         self.target_list_view.data = []
 
     def update(self):
-        self.target_list_view.update()
+        self.target_list_view.update()      # keep updating list of targets
         self.running = self.watcher.running
+        self.updating = self.running
 
     def run_update_loop(self):
         if self.updating:
@@ -91,7 +98,6 @@ class HomeScreen(Screen):
             return
         self.updating = True
         while self.updating:
-            # logging.debug(self.watcher.running)
             if self.running:
                 self.update()
             sleep(0.1)
@@ -101,6 +107,7 @@ class HomeScreen(Screen):
         return super().on_leave(*args)
 
     def on_enter(self, *args):
-        Clock.schedule_once(lambda dt: Thread(target=self.run_update_loop).start(), 1)
+        Thread(target=self.run_update_loop).start()
+        # Clock.schedule_once(lambda dt: Thread(target=self.run_update_loop).start(), 0)
         return super().on_enter(*args)
 

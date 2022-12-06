@@ -1,4 +1,4 @@
-from time import sleep, time
+from time import sleep
 from typing import List, Tuple
 from Base.socket_base import Socket, Config
 from socket import socket, AF_INET, SOCK_STREAM
@@ -8,10 +8,6 @@ from Base.constants import ALREADY_CONNECTED, CONTROL_KEYBOARD, CONTROL_MOUSE, S
 import logging
 from pynput.keyboard import Listener, Key, KeyCode
 from queue import Queue, Empty
-from zlib import decompress, error as ZlibError
-from PIL import Image, ImageChops
-from io import BytesIO
-import numpy as np
 
 
 class Watcher(Socket):
@@ -30,10 +26,14 @@ class Watcher(Socket):
         self.request_lock = Lock()
 
     def start(self):
+        """
+            Starts watcher
+            returns true if started successfully else false
+        """
         if self.running:
             logging.warning("Watcher started without stopping it. Cannot start again.")
             raise Exception("Watcher started without stopping")
-        self.socket.close()
+        self.socket.close()     # close socket if already open
         self.socket = socket(AF_INET, SOCK_STREAM)
         logging.info("Starting Watcher")
         try:
@@ -46,8 +46,8 @@ class Watcher(Socket):
         self.running = True
 
         try:
-            self.send_data(WATCHER.encode(self.FORMAT))
-            self.send_data(self.config.code.encode(self.FORMAT))
+            self.send_data(WATCHER.encode(self.FORMAT))     # send this client's type
+            self.send_data(self.config.code.encode(self.FORMAT))   # send this client's unique code
             ack = self.recv_data().decode(self.FORMAT)    # receive "OK"
             if ack == ALREADY_CONNECTED:
                 logging.info("Already connected to server. Cannot connect again")
@@ -58,15 +58,13 @@ class Watcher(Socket):
             return False
 
         Thread(target=self.update_target_list).start()
-        # logging.debug("Update started")
 
         return True
 
-        # print(self.target_list)
-        # i = int(input("Enter index: "))
-        # self.send_data(self.target_list[i].encode(self.FORMAT))
-
     def update_target_list(self):
+        """ 
+            Keeps fetching list of targets from Server
+        """
         while self.running:
             with self.request_lock:
                 self.send_data(SEND_TARGET_LIST.encode(self.FORMAT))
@@ -80,19 +78,16 @@ class Watcher(Socket):
                 logging.debug("Main watcher connection closed")
                 self.running = False
                 break
-            # WARNING: Next line might be vulnerable and can result in remote code execution
+
+            # TODO: WARNING: Next line is vulnerable and can result in remote code execution
             # Fix it
             self.target_list = eval(target_list)
             sleep(1)
 
     def watch(self, target_code):
-        # with self.request_lock:
-        #     try:
-        #         self.send_data(WATCH_BY_CODE.encode(self.FORMAT))
-        #         self.send_data(target_code.encode(self.FORMAT))
-        #     except (ConnectionResetError, BrokenPipeError):
-        #         self.stop()
-        #         return False
+        """"
+            Start screen reader and controller
+        """
         self.watching = True
         self.screen_reader = ScreenReader(target_code)
         self.screen_reader.watcher = self
@@ -103,6 +98,9 @@ class Watcher(Socket):
         return True
 
     def stop_watching(self):
+        """
+            Send stop watching request to the server
+        """
         self.watching = False
         with self.request_lock:
             try:
@@ -111,6 +109,9 @@ class Watcher(Socket):
                 pass
 
     def stop(self):
+        """
+            Stop the main watcher client and all its dependents (ScreenReader, Controller, etc.)
+        """
         logging.info("Stopping Watcher")
         if self.watching:
             self.stop_watching()
@@ -120,6 +121,9 @@ class Watcher(Socket):
 
 
 class ScreenReader(Socket):
+    """
+        The class with methods to read the target screen
+    """
 
     def __init__(self, target_code: str):
         super().__init__(SERVER_ADDRESS, SERVER_PORT)
@@ -128,6 +132,9 @@ class ScreenReader(Socket):
         self.watcher: Watcher = None
 
     def start(self):
+        """
+            Start the screen reader client
+        """
         logging.info("Starting Watcher Screen Reader")
         try:
             self.socket.connect(self.addr)
@@ -138,9 +145,9 @@ class ScreenReader(Socket):
         logging.info("Connected to server")
 
         try:
-            self.send_data(WATCHER_SCREEN_READER.encode(self.FORMAT))
-            self.send_data(self.config.code.encode(self.FORMAT))
-            self.send_data(self.target_code.encode(self.FORMAT))
+            self.send_data(WATCHER_SCREEN_READER.encode(self.FORMAT))   # send client type
+            self.send_data(self.config.code.encode(self.FORMAT))        # send client code
+            self.send_data(self.target_code.encode(self.FORMAT))        # send target code
             self.recv_data().decode(self.FORMAT)  # receive "OK"
         except (BrokenPipeError, ConnectionResetError):
             # logging.debug(traceback.format_exc())
@@ -152,7 +159,10 @@ class ScreenReader(Socket):
         self.run()
 
     def run(self):
-        self.first_img = None
+        """
+            keep fetching target screen images
+            send acknowledgement at every `ACKNOWLEDGEMENT_ITERATION` iteration
+        """
         i = 0
         while self.running and self.watcher.watching:
             try:
@@ -172,11 +182,20 @@ class ScreenReader(Socket):
         self.stop()
 
     def stop(self):
+        """
+            Stop screen reader only
+        """
         self.running = False
         self.socket.close()
 
 
 class Controller(Socket):
+    """
+        The main controller client.
+        All controllers (i.e mouse controller, keyboard controller, etc.) use
+        the same socket provided by this main controller. To avoid data races
+        they all use `control_lock` (an object of `threading.Lock`).
+    """
 
     def __init__(self, target_code):
         super().__init__(SERVER_ADDRESS, SERVER_PORT)
@@ -188,6 +207,9 @@ class Controller(Socket):
         self.config = Config()
 
     def start(self):
+        """
+            Start all the controllers
+        """
         logging.info("Starting watcher controller")
         # self.keyboard_controller.start()
         # self.socket.connect(self.addr)
@@ -205,9 +227,9 @@ class Controller(Socket):
 
         self.mouse_controller.start()
         try:
-            self.send_data(WATCHER_CONTROLLER.encode(self.FORMAT))
-            self.send_data(self.config.code.encode(self.FORMAT))
-            self.send_data(self.target_code.encode(self.FORMAT))
+            self.send_data(WATCHER_CONTROLLER.encode(self.FORMAT))  # send client type
+            self.send_data(self.config.code.encode(self.FORMAT))    # send client code
+            self.send_data(self.target_code.encode(self.FORMAT))    # send target code
             self.recv_data().decode(self.FORMAT)  # receive "OK"
         except (BrokenPipeError, ConnectionResetError):
             # logging.debug(traceback.format_exc())
@@ -219,6 +241,10 @@ class Controller(Socket):
         self.run()
 
     def run(self):
+        """
+            Each controller has an update function. All those
+            are called here at regular intervals after some small delay
+        """
         while self.running:
             # self.keyboard_controller.update()
             self.mouse_controller.update()
@@ -232,6 +258,9 @@ class Controller(Socket):
 
 
 class KeyboardController(Socket):
+    """
+        The keyboard controller.
+    """
 
     def __init__(self, skt: socket, control_lock: Lock) -> None:
         super().__init__(SERVER_ADDRESS, SERVER_PORT, skt)
@@ -239,15 +268,21 @@ class KeyboardController(Socket):
         self.control_lock = control_lock
 
     def start(self):
+        """
+            The key queue is updated every time a key is pressed.
+            pynput keyboard listener is used.
+        """
         logging.info("Starting Keyboard Controller")
         self.listener = Listener(on_press=self.on_press)
         self.listener.start()
 
     def stop(self):
+        """
+            Stop the pynput keyboard listener
+        """
         self.listener.stop()
 
     def on_press(self, key):
-        # print(type(key))
         if isinstance(key, Key):
             logging.debug((key.name, key.value))
         elif isinstance(key, KeyCode):
@@ -260,6 +295,9 @@ class KeyboardController(Socket):
             logging.debug(key.vk, key.combining, key.char)
 
     def update(self):
+        """
+            If key queue is not empty, fetch the keys and send to server.
+        """
         if not self.keys.empty():
             with self.control_lock:
                 self.send_data(CONTROL_KEYBOARD.encode(self.FORMAT))
@@ -267,6 +305,9 @@ class KeyboardController(Socket):
                 self.send_data(" ".join(keys).encode(self.FORMAT))
 
     def get_keys(self):
+        """
+            Gets keys from queue and returns a list containing the keys
+        """
         keys = []
         while not self.keys.empty():
             try:
@@ -277,6 +318,10 @@ class KeyboardController(Socket):
 
 
 class MouseController(Socket):
+    """
+        The mouse controller.
+        The clicks queue is updated by the GUI.
+    """
 
     def __init__(self, socket: socket, lock: Lock) -> None:
         super().__init__(SERVER_ADDRESS, SERVER_PORT, socket)
@@ -288,15 +333,24 @@ class MouseController(Socket):
         pass
 
     def update_mouse_pos(self, _, pos):
+        """
+            Keep updating the mouse position.
+        """
         self.pos = pos
 
     def get_clicks(self):
+        """
+            Gets clicks from queue and returns a list containing the clicks
+        """
         l = []
         while not self.clicks.empty():
             l.append(self.clicks.get_nowait())
         return l
 
     def update(self):
+        """
+            Sends only one click at a time
+        """
         if self.clicks.empty():
             return
         click = self.clicks.get_nowait()

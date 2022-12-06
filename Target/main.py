@@ -10,10 +10,8 @@ from queue import Queue, Empty
 from socket import socket, AF_INET, SOCK_STREAM
 import subprocess
 from threading import Thread
-from time import sleep, time
+from time import sleep
 import traceback
-from zlib import compress
-import numpy as np
 
 try:
     from mss import mss
@@ -41,6 +39,9 @@ class Target(Socket):
         self.control_thread = None
 
     def start_screen_reader(self):
+        """
+            starts the screen reader client.
+        """
         self.screen_reader = ScreenReader()
         self.controlling = self.screen_reader.init()
         if not self.controlling:
@@ -56,6 +57,12 @@ class Target(Socket):
         logging.info("Stoping screen reader client")
 
     def start_controller(self):
+        """
+            Starts the controller.
+            Calls `self.controller.controll` which populates the control queues.
+            Starts a new thread which fetches control instructions from queues and 
+            executes them.
+        """
         self.controller = Controller()
         self.controlling = self.controller.init()
         Thread(target=self.controller.run_update_loop).start()
@@ -76,12 +83,17 @@ class Target(Socket):
         logging.info("Stoping controller client")
 
     def control(self):
+        """
+            Starts controller and screen reader clients.
+        """
         self.control_thread = Thread(target=self.start_controller)
         self.control_thread.start()
         self.start_screen_reader()
 
     def run(self):
-        # Run a loop which connects to the server and waits for clients
+        """
+            Run a loop which connects to the server and waits for watcher clients
+        """
         while self.running:
             try:
                 self.socket.close()
@@ -119,11 +131,17 @@ class Target(Socket):
             sleep(1)
 
     def start(self):
+        """
+            The main start function. Use this to start the target client
+        """
         if not self.controlling:
             self.running = True
             self.run()
 
     def stop(self):
+        """
+            Stop this target client and exit
+        """
         self.running = False
         self.controlling = False
         if "controller" in dir(self):
@@ -142,6 +160,9 @@ class ScreenReader(Socket):
         self.mss = None
 
     def init(self) -> bool:
+        """
+            initiate connections and return True if connection was established else False
+        """
         self.socket.connect(self.addr)
         self.send_data(TARGET_SCREEN_READER.encode(self.FORMAT))
         self.send_data(self.config.code.encode(self.FORMAT))
@@ -154,6 +175,8 @@ class ScreenReader(Socket):
 
     def send_screenshot(self, i) -> bool:
         """ 
+            Returns True if the screenshot was successfully sent, False otherwise
+
             Analysis of time required to
             send over network > convert to bytes > take screenshot
             TODO: (optional) Resize image according to network speed to maintain framerate
@@ -161,7 +184,7 @@ class ScreenReader(Socket):
         img = self.take_screenshot()
         try:
             img_bin = self.image2bin(img)
-            logging.debug(len(img_bin))
+            # logging.debug(len(img_bin))
             self.send_data(img_bin)  # send the image
             if i==ACKNOWLEDGEMENT_ITERATION:
                 self.recv_data()
@@ -170,19 +193,29 @@ class ScreenReader(Socket):
         return True
 
     def stop(self) -> None:
+        """
+            Stop the screen reader. No extra thread was run by this class
+            so only closing socket.
+        """
         self.socket.close()
 
     def take_screenshot(self) -> Image:
-        # mss screenshot is 3x faster than gi screenshot
+        """
+            Generic screenshot function that uses screenshot tool based on platform.
+        """
         if 'linux' in self.platform:
             img = self.take_screenshot_mss()
-            # img = self.take_screenshot_linux()
+            # img = self.take_screenshot_pygobject()
         else:
-            img = self.take_screenshot_other()
+            img = self.take_screenshot_PIL()
 
         return img
 
-    def take_screenshot_linux(self) -> Image:
+    def take_screenshot_pygobject(self) -> Image:
+        """
+            Take screenshot using PyGobject.
+            Tested on Gnome only. Might not work on other desktop environments.
+        """
         window = Gdk.get_default_root_window()
         x, y, width, height = window.get_geometry()
         pb: Pixbuf = Gdk.pixbuf_get_from_window(window, x, y, width, height)
@@ -203,19 +236,34 @@ class ScreenReader(Socket):
         return img
 
     def image2bin(self, img: Image) -> bytes:
+        """
+            Convert PIL Image to bytes
+        """
         import io
         bio = io.BytesIO()
         img.save(bio, format=IMG_FORMAT, optimize=True)
         return bio.getvalue()
 
     def pixbuf_to_bin(self, pb) -> bytes:
+        """
+            Convert gdkpixbuf to binary
+        """
         return self.image2bin(self.pixbuf2image(pb))
 
-    def take_screenshot_other(self) -> Image:
+    def take_screenshot_PIL(self) -> Image:
+        """
+            Take screenshot using PIL
+            Works on most platforms but is damn slow.
+        """
         from PIL import ImageGrab
         return ImageGrab.grab()
 
     def take_screenshot_mss(self) -> Image:
+        """
+            Take a screenshot using mss package.
+            mss screenshot is 3x faster than gi screenshot.
+            TODO: test on other platforms also
+        """
         if self.mss is None:
             self.mss = mss()
         img = self.mss.grab(self.mss.monitors[0])
@@ -225,7 +273,7 @@ class ScreenReader(Socket):
 
 
 class Controller(Socket):
-    
+
     def __init__(self) -> None:
         super().__init__(SERVER_ADDRESS, SERVER_PORT)
 
@@ -234,6 +282,10 @@ class Controller(Socket):
         self.keyboard = Keyboard()
 
     def init(self) -> bool:
+        """
+            Initiate connection to server. Returns True if 
+            connection is successfull else False.
+        """
         self.socket.connect(self.addr)
         self.send_data(TARGET_CONTROLLER.encode(self.FORMAT))
         self.send_data(self.config.code.encode(self.FORMAT))
@@ -246,6 +298,10 @@ class Controller(Socket):
         return False
 
     def control(self):
+        """
+            Receive control requests and put them in corresponding
+            queues based on `control_type`
+        """
         control_type = self.recv_data().decode(self.FORMAT)
 
         if control_type == CONTROL_MOUSE:
@@ -256,6 +312,9 @@ class Controller(Socket):
         return True
 
     def run_update_loop(self):
+        """
+            Runs the loop that runs update for each controller
+        """
         logging.info("Starting update loop")
         self.running = True
         while self.running:
@@ -281,6 +340,9 @@ class Mouse(object):
         logging.debug(self.screen_size)
 
     def update(self):
+        """
+            Fetch mouse control requests from queue and handle them.
+        """
         if self.clicks.empty():
             return
         click = eval(self.clicks.get())
@@ -297,6 +359,9 @@ class Mouse(object):
 
 
     def get_clicks(self):
+        """
+            Fetches requests from queue and returns them as a list
+        """
         clicks = []
         while not self.clicks.empty():
             try:
@@ -306,13 +371,21 @@ class Mouse(object):
         return clicks
 
     def get_screen_size(self):
-        cmd = ['xrandr']
-        cmd2 = ['grep', '*']
-        xrandr = subprocess.Popen(cmd, stdout=subprocess.PIPE)
-        grep = subprocess.Popen(cmd2, stdin=xrandr.stdout, stdout=subprocess.PIPE)
-        res, junk = grep.communicate()
-        resolution = res.split()[0].decode("utf-8")
-        return [int(i) for i in resolution.split('x')]
+        """
+            Returns the resolution of the screen
+        """
+        try:
+            m = mss()
+            mon = m.monitors[0]
+            return [mon['width'], mon['height']]
+        except NameError:
+            cmd = ['xrandr']
+            cmd2 = ['grep', '*']
+            xrandr = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+            grep = subprocess.Popen(cmd2, stdin=xrandr.stdout, stdout=subprocess.PIPE)
+            res, _ = grep.communicate()
+            resolution = res.split()[0].decode("utf-8")
+            return [int(i) for i in resolution.split('x')]
 
 
 if __name__ == "__main__":
