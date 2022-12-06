@@ -1,17 +1,24 @@
 from Base.constants import ALREADY_CONNECTED, CONTROL_MOUSE, TARGET_SCREEN_READER, \
     TARGET_CONTROLLER, DISCONNECT
-from Base.settings import IMG_FORMAT, SERVER_PORT, SERVER_ADDRESS
+from Base.settings import ACKNOWLEDGEMENT_ITERATION, IMG_FORMAT, SERVER_PORT, SERVER_ADDRESS
 from Base.socket_base import Socket, Config
 import logging
-from PIL import Image
+from PIL import Image, ImageChops
 from pynput.keyboard import Controller as KeyController
 from pynput.mouse import Controller as MouseController, Button as MouseButton
 from queue import Queue, Empty
 from socket import socket, AF_INET, SOCK_STREAM
 import subprocess
 from threading import Thread
-from time import sleep
+from time import sleep, time
 import traceback
+from zlib import compress
+import numpy as np
+
+try:
+    from mss import mss
+except ImportError:
+    logging.info("Cannot import mss")
 
 try:
     import gi
@@ -19,7 +26,7 @@ try:
     from gi.repository import Gdk
     from gi.overrides.GdkPixbuf import Pixbuf
 except:
-    pass
+    logging.info("Cannot import gi")
 
 
 class Target(Socket):
@@ -40,9 +47,11 @@ class Target(Socket):
             logging.info("Screen reader cannot connect to server. " + 
             "Either already connected or got disconnected after connection")
 
+        i = 0
         while self.controlling:
-            sleep(0.01)
-            self.controlling = self.screen_reader.send_screenshot()
+            i+=1
+            self.controlling = self.screen_reader.send_screenshot(i)
+            i %= ACKNOWLEDGEMENT_ITERATION
         self.screen_reader.stop()
         logging.info("Stoping screen reader client")
 
@@ -122,11 +131,15 @@ class Target(Socket):
 
 
 class ScreenReader(Socket):
+    # TODO:
+    # 1. Send the image as a diff and not the whole data
+    # 2. implement fallback from mss to gi (for linux) and from gi to PIL
 
     def __init__(self) -> None:
         super().__init__(SERVER_ADDRESS, SERVER_PORT)
         self.config = Config()
         self.prev_img = None
+        self.mss = None
 
     def init(self) -> bool:
         self.socket.connect(self.addr)
@@ -139,22 +152,20 @@ class ScreenReader(Socket):
             return False
         return False
 
-    def send_screenshot(self) -> bool:
+    def send_screenshot(self, i) -> bool:
+        """ 
+            Analysis of time required to
+            send over network > convert to bytes > take screenshot
+            TODO: (optional) Resize image according to network speed to maintain framerate
+        """
         img = self.take_screenshot()
-        # temp = img
-        # if self.prev_img is not None:
-            # img = Image.fromarray(np.array(img)-np.array(self.prev_img))
-        # self.prev_img = temp
-
         try:
-            self.send_data(self.image2bin(img))  # send the image
-            ack = self.recv_data()   # Reveive "OK" (acknowledgement)
+            img_bin = self.image2bin(img)
+            logging.debug(len(img_bin))
+            self.send_data(img_bin)  # send the image
+            if i==ACKNOWLEDGEMENT_ITERATION:
+                self.recv_data()
         except (ConnectionResetError, BrokenPipeError):
-            return False
-
-        if not ack:
-            return False
-        if ack.decode(self.FORMAT) == DISCONNECT:
             return False
         return True
 
@@ -162,13 +173,14 @@ class ScreenReader(Socket):
         self.socket.close()
 
     def take_screenshot(self) -> Image:
+        # mss screenshot is 3x faster than gi screenshot
         if 'linux' in self.platform:
-            img = self.take_screenshot_linux()
+            img = self.take_screenshot_mss()
+            # img = self.take_screenshot_linux()
         else:
             img = self.take_screenshot_other()
 
         return img
-        # return self.take_screenshot_other()
 
     def take_screenshot_linux(self) -> Image:
         window = Gdk.get_default_root_window()
@@ -177,10 +189,6 @@ class ScreenReader(Socket):
         img = self.pixbuf2image(pb)
         img = img.resize((img.size[0]//2, img.size[1]//2), Image.ANTIALIAS)
         return img
-
-    def take_screenshot_other(self) -> Image:
-        from PIL import ImageGrab
-        return ImageGrab.grab()
 
     def pixbuf2image(self, pix: Pixbuf) -> Image:
         """Convert gdkpixbuf to PIL image"""
@@ -202,6 +210,18 @@ class ScreenReader(Socket):
 
     def pixbuf_to_bin(self, pb) -> bytes:
         return self.image2bin(self.pixbuf2image(pb))
+
+    def take_screenshot_other(self) -> Image:
+        from PIL import ImageGrab
+        return ImageGrab.grab()
+
+    def take_screenshot_mss(self) -> Image:
+        if self.mss is None:
+            self.mss = mss()
+        img = self.mss.grab(self.mss.monitors[0])
+        pilImg = Image.frombytes("RGB", img.size, img.bgra, "raw", "BGRX")
+        # pilImg = pilImg.resize((pilImg.size[0]//2, pilImg.size[1]//2), Image.ANTIALIAS)
+        return pilImg
 
 
 class Controller(Socket):
@@ -268,6 +288,7 @@ class Mouse(object):
         btn = click[0]
         pos = click[1]
         self.mouse_controller.position = pos[0]*self.screen_size[0], (1-pos[1])*self.screen_size[1]
+        sleep(0.01)
         if btn == "left":
             self.mouse_controller.click(MouseButton.left)
             logging.debug("left click")

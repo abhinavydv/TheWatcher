@@ -5,7 +5,7 @@ from typing import Dict, List
 from Base.socket_base import Socket
 from socket import SHUT_RDWR, socket
 from threading import Thread
-from Base.settings import SERVER_PORT, SERVER_ADDRESS
+from Base.settings import SERVER_PORT, SERVER_ADDRESS, ACKNOWLEDGEMENT_ITERATION
 from Base.constants import CONTROL_MOUSE, STOP_WATCHING, TARGET_RUNNING, \
     TARGET_SCREEN_READER, TARGET_CONTROLLER, DISCONNECT, TARGET_WAITING, WATCHER, WATCHER_CONTROLLER,\
         WATCHER_SCREEN_READER, SEND_TARGET_LIST, ALREADY_CONNECTED
@@ -114,13 +114,16 @@ class Server(Socket):
         self.target_screens[code] = target
         target.send_data(b"OK")
         running = True
+        i = 0
         while running and self.running:
             try:
                 target.img = target.recv_data()
                 target.ready = True
-                # with open("img.jpg", "wb") as f:
-                #     f.write(target.img)
-                target.send_data(b"OK")
+                i += 1
+                if i==ACKNOWLEDGEMENT_ITERATION:
+                    target.send_data(b"OK")
+                    i = 0
+                
             except (BrokenPipeError, ConnectionResetError): # client disconnected
                 logging.info(f"Removing target screen reader client {code}")
                 break
@@ -253,22 +256,18 @@ class Server(Socket):
         running = True
         logging.debug(f"{self.targets[target_code].watchers} watchers connected")
         self.watchers[code].running = True
+        i = 0
         while running and self.running:
             try:
-                # t1 = time()
-                # logging.debug("Sending image")
-                # if os.path.exists("img2.jpg"):
-                #     with open("img2.jpg", "rb") as f:
-                #         logging.debug(str(f.read() == target_screen.img))
-                # with open("img2.jpg", "wb") as f:
-                #     f.write(target_screen.img)
                 if target_code not in self.targets:
                     watcher.socket.close()
                     break
                 watcher.send_data(target_screen.img)
-                watcher.recv_data()  # receive "OK"
-                sleep(0.02)
-                # logging.debug(time()-t1)
+                i += 1
+                if i==ACKNOWLEDGEMENT_ITERATION:
+                    watcher.recv_data()  # receive acknowledgement
+                    i = 0
+                sleep(0.01)
             except (BrokenPipeError, ConnectionResetError):
                 logging.debug("Screen reader disconnected. Removing it and stopping watching")
                 break

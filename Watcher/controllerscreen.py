@@ -1,15 +1,9 @@
-from Base.socket_base import Socket
-from Base.settings import SERVER_ADDRESS, SERVER_PORT
 from datetime import datetime
 from io import BytesIO
 import logging
 import os
-from queue import Queue
 from random import randint
-from socket import socket
-from threading import Lock, Thread
-from time import sleep
-from typing import Tuple
+import traceback
 from watcher import Watcher
 
 from kivy.clock import Clock
@@ -68,6 +62,7 @@ class ControllerScreen(Screen):
             try:
                 self.ci = CoreImage(img_io, ext="jpg")
             except Exception:
+                logging.error(traceback.format_exc())
                 self.stop()
             self.img.texture = self.ci.texture
 

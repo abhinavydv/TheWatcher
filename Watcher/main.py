@@ -1,3 +1,6 @@
+from kivy.config import Config
+Config.set('input', 'mouse', 'mouse,multitouch_on_demand')
+
 from kivymd.app import MDApp
 from kivy.uix.screenmanager import ScreenManager
 from homescreen import HomeScreen

@@ -1,13 +1,17 @@
-from time import sleep
+from time import sleep, time
 from typing import List, Tuple
 from Base.socket_base import Socket, Config
 from socket import socket, AF_INET, SOCK_STREAM
 from threading import Lock, Thread
-from Base.settings import SERVER_PORT, SERVER_ADDRESS
+from Base.settings import IMG_FORMAT, SERVER_PORT, SERVER_ADDRESS, ACKNOWLEDGEMENT_ITERATION
 from Base.constants import ALREADY_CONNECTED, CONTROL_KEYBOARD, CONTROL_MOUSE, STOP_WATCHING, WATCHER, WATCHER_CONTROLLER, WATCHER_SCREEN_READER, SEND_TARGET_LIST
 import logging
 from pynput.keyboard import Listener, Key, KeyCode
 from queue import Queue, Empty
+from zlib import decompress, error as ZlibError
+from PIL import Image, ImageChops
+from io import BytesIO
+import numpy as np
 
 
 class Watcher(Socket):
@@ -148,18 +152,19 @@ class ScreenReader(Socket):
         self.run()
 
     def run(self):
+        self.first_img = None
+        i = 0
         while self.running and self.watcher.watching:
             try:
                 self.img = self.recv_data()
                 if not self.img:
                     logging.info("Connection to screen reader closed by server.")
                     break
-                # logging.debug("Receiving image from server")
-                # with open("img.jpg", "wb") as f:
-                #     f.write(self.img)
-                self.send_data(b"OK")
+                i += 1
+                if i==ACKNOWLEDGEMENT_ITERATION:
+                    self.send_data(b"OK")  # send acknowledgement
+                    i = 0
             except (BrokenPipeError, ConnectionResetError): # disconnected
-                # logging.debug(traceback.format_exc())
                 self.running = False   # check in the gui if this is running... If not running, Say connection problem
                 logging.info("Screen Reader disconnected from server, stopping watching")
                 self.watcher.watching = False
