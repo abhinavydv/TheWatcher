@@ -7,5 +7,5 @@ if [[ -n ".watchenv" ]] do
     virtualenv .watchenv
 done
 
-source .watchenv/bin/activate
-pip install requirements.txt
+source .watchenv3.10/bin/activate
+pip install -r requirements.txt

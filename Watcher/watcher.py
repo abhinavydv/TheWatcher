@@ -190,7 +190,8 @@ class ScreenReader(Socket):
 
 
 class Controller(Socket):
-    """
+    """switch from pynput to pyautogui
+        TODO: 
         The main controller client.
         All controllers (i.e mouse controller, keyboard controller, etc.) use
         the same socket provided by this main controller. To avoid data races
