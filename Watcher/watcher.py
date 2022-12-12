@@ -3,8 +3,11 @@ from typing import List, Tuple
 from Base.socket_base import Socket, Config
 from socket import socket, AF_INET, SOCK_STREAM
 from threading import Lock, Thread
-from Base.settings import IMG_FORMAT, SERVER_PORT, SERVER_ADDRESS, ACKNOWLEDGEMENT_ITERATION
-from Base.constants import ALREADY_CONNECTED, CONTROL_KEYBOARD, CONTROL_MOUSE, STOP_WATCHING, WATCHER, WATCHER_CONTROLLER, WATCHER_SCREEN_READER, SEND_TARGET_LIST
+from Base.settings import IMG_FORMAT, SERVER_PORT, SERVER_ADDRESS, \
+    ACKNOWLEDGEMENT_ITERATION
+from Base.constants import ALREADY_CONNECTED, CONTROL_KEYBOARD, \
+    CONTROL_MOUSE, STOP_WATCHING, WATCHER, WATCHER_CONTROLLER, \
+    WATCHER_SCREEN_READER, SEND_TARGET_LIST
 import logging
 from pynput.keyboard import Listener, Key, KeyCode
 from queue import Queue, Empty
@@ -31,7 +34,8 @@ class Watcher(Socket):
             returns true if started successfully else false
         """
         if self.running:
-            logging.warning("Watcher started without stopping it. Cannot start again.")
+            logging.warning("Watcher started without stopping it. "
+                "Cannot start again.")
             raise Exception("Watcher started without stopping")
         self.socket.close()     # close socket if already open
         self.socket = socket(AF_INET, SOCK_STREAM)
@@ -46,14 +50,19 @@ class Watcher(Socket):
         self.running = True
 
         try:
-            self.send_data(WATCHER.encode(self.FORMAT))     # send this client's type
-            self.send_data(self.config.code.encode(self.FORMAT))   # send this client's unique code
+            # send this client's type
+            self.send_data(WATCHER.encode(self.FORMAT))
+
+            # send this client's unique code
+            self.send_data(self.config.code.encode(self.FORMAT))
             ack = self.recv_data().decode(self.FORMAT)    # receive "OK"
             if ack == ALREADY_CONNECTED:
-                logging.info("Already connected to server. Cannot connect again")
+                logging.info("Already connected to server. "
+                    "Cannot connect again")
                 return False
         except (BrokenPipeError, ConnectionResetError):
-            logging.fatal("Connection to server closed unexpectedly. Aborting")
+            logging.fatal("Connection to server closed unexpectedly. "
+                "Aborting")
             self.stop()
             return False
 
@@ -71,16 +80,19 @@ class Watcher(Socket):
                 try:
                     target_list = self.recv_data().decode(self.FORMAT)
                 except OSError:
-                    logging.debug("OSError while getting target list. Aborting")
+                    logging.debug("OSError while getting target list. "
+                        "Aborting")
                     self.running = False
                     break
             if not target_list:
                 logging.debug("Main watcher connection closed")
                 self.running = False
                 break
-
-            # TODO: WARNING: Next line is vulnerable and can result in remote code execution
-            # Fix it
+            
+            """
+                TODO: WARNING: Next line is vulnerable and can result in 
+                    remote code execution. Fix it
+            """
             self.target_list = eval(target_list)
             sleep(1)
 
@@ -110,7 +122,8 @@ class Watcher(Socket):
 
     def stop(self):
         """
-            Stop the main watcher client and all its dependents (ScreenReader, Controller, etc.)
+            Stop the main watcher client and all its dependents 
+            (ScreenReader, Controller, etc.)
         """
         logging.info("Stopping Watcher")
         if self.watching:
@@ -145,9 +158,9 @@ class ScreenReader(Socket):
         logging.info("Connected to server")
 
         try:
-            self.send_data(WATCHER_SCREEN_READER.encode(self.FORMAT))   # send client type
-            self.send_data(self.config.code.encode(self.FORMAT))        # send client code
-            self.send_data(self.target_code.encode(self.FORMAT))        # send target code
+            self.send_data(WATCHER_SCREEN_READER.encode(self.FORMAT))
+            self.send_data(self.config.code.encode(self.FORMAT))
+            self.send_data(self.target_code.encode(self.FORMAT))
             self.recv_data().decode(self.FORMAT)  # receive "OK"
         except (BrokenPipeError, ConnectionResetError):
             # logging.debug(traceback.format_exc())
@@ -168,14 +181,17 @@ class ScreenReader(Socket):
             try:
                 self.img = self.recv_data()
                 if not self.img:
-                    logging.info("Connection to screen reader closed by server.")
+                    logging.info("Connection to screen reader "
+                        "closed by server.")
                     break
                 i += 1
                 if i==ACKNOWLEDGEMENT_ITERATION:
                     self.send_data(b"OK")  # send acknowledgement
                     i = 0
             except (BrokenPipeError, ConnectionResetError): # disconnected
-                self.running = False   # check in the gui if this is running... If not running, Say connection problem
+                # check in the gui if this is running... 
+                # If not running, Say connection problem
+                self.running = False
                 logging.info("Screen Reader disconnected from server, stopping watching")
                 self.watcher.watching = False
                 break
@@ -190,8 +206,7 @@ class ScreenReader(Socket):
 
 
 class Controller(Socket):
-    """switch from pynput to pyautogui
-        TODO: 
+    """
         The main controller client.
         All controllers (i.e mouse controller, keyboard controller, etc.) use
         the same socket provided by this main controller. To avoid data races
@@ -202,7 +217,8 @@ class Controller(Socket):
         super().__init__(SERVER_ADDRESS, SERVER_PORT)
         self.target_code = target_code
         self.control_lock = Lock()
-        # self.keyboard_controller = KeyboardController(self.socket, self.control_lock)
+        # self.keyboard_controller = KeyboardController(self.socket, 
+        #     self.control_lock)
         self.mouse_controller = MouseController(self.socket, self.control_lock)
         self.watcher: Watcher = None
         self.config = Config()
@@ -228,9 +244,9 @@ class Controller(Socket):
 
         self.mouse_controller.start()
         try:
-            self.send_data(WATCHER_CONTROLLER.encode(self.FORMAT))  # send client type
-            self.send_data(self.config.code.encode(self.FORMAT))    # send client code
-            self.send_data(self.target_code.encode(self.FORMAT))    # send target code
+            self.send_data(WATCHER_CONTROLLER.encode(self.FORMAT))
+            self.send_data(self.config.code.encode(self.FORMAT))
+            self.send_data(self.target_code.encode(self.FORMAT))
             self.recv_data().decode(self.FORMAT)  # receive "OK"
         except (BrokenPipeError, ConnectionResetError):
             # logging.debug(traceback.format_exc())
@@ -265,7 +281,9 @@ class KeyboardController(Socket):
 
     def __init__(self, skt: socket, control_lock: Lock) -> None:
         super().__init__(SERVER_ADDRESS, SERVER_PORT, skt)
-        self.keys = Queue(0)    # Format example: p345 (pressed code 345) r345 (released code 345)
+
+        # Format example: p345 (pressed code 345) r345 (released code 345)
+        self.keys = Queue(0)
         self.control_lock = control_lock
 
     def start(self):

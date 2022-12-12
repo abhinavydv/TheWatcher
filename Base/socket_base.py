@@ -9,7 +9,8 @@ root.setLevel(logging.DEBUG)
 
 # handler = logging.StreamHandler(sys.stdout)
 # handler.setLevel(logging.DEBUG)
-# formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# formatter = logging.Formatter('%(asctime)s - %(name)s - '
+#     '%(levelname)s - %(message)s')
 # handler.setFormatter(formatter)
 # root.addHandler(handler)
 
@@ -52,7 +53,9 @@ class Socket(object):
         if conn is None:
             conn = self.socket
         ln = str(len(data)).encode(self.FORMAT)
-        conn.sendall(ln + ' '.encode(self.FORMAT)*(64-len(ln)))  # send length of data
+
+        # send length of data
+        conn.sendall(ln + ' '.encode(self.FORMAT)*(64-len(ln)))  
         conn.sendall(data)  # send data
 
     def recv_data(self, conn: socket = None) -> bytes:

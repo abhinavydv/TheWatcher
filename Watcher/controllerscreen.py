@@ -93,10 +93,13 @@ class ControllerScreen(Screen):
         """
         if not self.running:
             return
-        img_pos = [(self.img.center_x - self.img.norm_image_size[0]/2), (self.img.center_y - self.img.norm_image_size[1]/2)]
+        img_pos = [(self.img.center_x - self.img.norm_image_size[0]/2), 
+            (self.img.center_y - self.img.norm_image_size[1]/2)]
         
-        # get relative click position (0, 0) is bottom left and (1, 1) is top right of target screen
-        click_pos = [(touch.pos[0]-img_pos[0])/self.img.norm_image_size[0], (touch.pos[1]-img_pos[1])/self.img.norm_image_size[1]]
+        # get relative click position (0, 0) is bottom left and 
+        # (1, 1) is top right of target screen
+        click_pos = [(touch.pos[0]-img_pos[0])/self.img.norm_image_size[0], 
+            (touch.pos[1]-img_pos[1])/self.img.norm_image_size[1]]
         if not (0 <= click_pos[0] <= 1 and 0 <= click_pos[1] <= 1):
             return
         if touch.button == "left":

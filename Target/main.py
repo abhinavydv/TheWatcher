@@ -1,10 +1,15 @@
-from Base.constants import ALREADY_CONNECTED, CONTROL_MOUSE, TARGET_SCREEN_READER, \
-    TARGET_CONTROLLER, DISCONNECT
-from Base.settings import ACKNOWLEDGEMENT_ITERATION, IMG_FORMAT, SERVER_PORT, SERVER_ADDRESS
+# check for dependencies and install missing ones
+from depsman import Setup
+Setup().install()
+
+
+from Base.constants import ALREADY_CONNECTED, CONTROL_MOUSE, \
+    TARGET_SCREEN_READER, TARGET_CONTROLLER, DISCONNECT
+from Base.settings import ACKNOWLEDGEMENT_ITERATION, IMG_FORMAT, \
+    SERVER_PORT, SERVER_ADDRESS
 from Base.socket_base import Socket, Config
 import logging
-from PIL import Image, ImageChops
-from pynput.keyboard import Controller as KeyController
+from PIL import Image
 from pynput.mouse import Controller as MouseController, Button as MouseButton
 from queue import Queue, Empty
 from socket import socket, AF_INET, SOCK_STREAM
@@ -12,6 +17,7 @@ import subprocess
 from threading import Thread
 from time import sleep
 import traceback
+
 
 try:
     from mss import mss
@@ -59,9 +65,9 @@ class Target(Socket):
     def start_controller(self):
         """
             Starts the controller.
-            Calls `self.controller.controll` which populates the control queues.
-            Starts a new thread which fetches control instructions from queues and 
-            executes them.
+            Calls `self.controller.controll` which populates control queues.
+            Starts a new thread which fetches control instructions from queues
+            and executes them.
         """
         self.controller = Controller()
         self.controlling = self.controller.init()
@@ -92,7 +98,9 @@ class Target(Socket):
 
     def run(self):
         """
-            Run a loop which connects to the server and waits for watcher clients
+            Run a loop which connects to the server and waits for watcher 
+            clients.
+            Stops if another client for this target is already connected
         """
         while self.running:
             try:
@@ -109,8 +117,13 @@ class Target(Socket):
                 logging.info("Waiting")
                 while data == b"WAIT":
                     data = self.recv_data()
-                if data == b"OK":
-                    logging.info("Starting ScreenReader and Controller clients")
+                if data == ALREADY_CONNECTED.encode(self.FORMAT):
+                    logging.info("Stopping as another client with same target"
+                    " code is already connected")
+                    self.stop()
+                    return
+                elif data == b"OK":
+                    logging.info("Starting ScreenReader and Controller")
                     self.controlling = True
                     self.control()
                 self.controlling = False
@@ -124,7 +137,8 @@ class Target(Socket):
             except ConnectionRefusedError:
                 logging.critical("Connection refused")
             except OSError:
-                logging.critical(f"OSError Occured\n{traceback.format_exc()}\n")
+                logging.critical(f"OSError Occured\n"
+                    f"{traceback.format_exc()}\n")
             except KeyboardInterrupt:
                 self.stop()
                 return
@@ -161,7 +175,8 @@ class ScreenReader(Socket):
 
     def init(self) -> bool:
         """
-            initiate connections and return True if connection was established else False
+            initiate connections and return True if connection 
+            was established else False
         """
         self.socket.connect(self.addr)
         self.send_data(TARGET_SCREEN_READER.encode(self.FORMAT))
@@ -175,11 +190,13 @@ class ScreenReader(Socket):
 
     def send_screenshot(self, i) -> bool:
         """ 
-            Returns True if the screenshot was successfully sent, False otherwise
+            Returns True if the screenshot was successfully 
+            sent, False otherwise
 
             Analysis of time required to
             send over network > convert to bytes > take screenshot
-            TODO: (optional) Resize image according to network speed to maintain framerate
+            TODO: (optional) Resize image according to network speed 
+            to maintain framerate
         """
         img = self.take_screenshot()
         try:
@@ -201,7 +218,8 @@ class ScreenReader(Socket):
 
     def take_screenshot(self) -> Image:
         """
-            Generic screenshot function that uses screenshot tool based on platform.
+            Generic screenshot function that uses screenshot 
+            tool based on platform.
         """
         if 'linux' in self.platform:
             img = self.take_screenshot_mss()
@@ -273,6 +291,13 @@ class ScreenReader(Socket):
 
 
 class Controller(Socket):
+    """
+        TODO: Switch from pynput to pyautogui as pyautogui 
+            can be installed easily
+        CON: cannot monitor keyboard. Keylogger will not work. 
+            pynput can be installed only on systems that already have 
+            pip or libpython3-dev installed as it needs Python.h header files.
+    """
 
     def __init__(self) -> None:
         super().__init__(SERVER_ADDRESS, SERVER_PORT)
@@ -328,7 +353,8 @@ class Controller(Socket):
 class Keyboard(object):
 
     def __init__(self) -> None:
-        self.key_controller = KeyController()
+        # self.key_controller = KeyController()
+        pass
 
 
 class Mouse(object):
@@ -345,17 +371,25 @@ class Mouse(object):
         """
         if self.clicks.empty():
             return
+        self.screen_size = self.get_screen_size()
         click = eval(self.clicks.get())
         logging.debug(str(click))
         btn = click[0]
-        pos = click[1]
-        self.mouse_controller.position = pos[0]*self.screen_size[0], (1-pos[1])*self.screen_size[1]
-        sleep(0.01)
+        rel_pos = click[1]
+        pos = (
+            rel_pos[0]*self.screen_size[0],
+            (1-rel_pos[1])*self.screen_size[1]
+        )
+        self.mouse_controller.position = pos
+        # pg.moveTo(*pos)
+        # sleep(0.01)
         if btn == "left":
             self.mouse_controller.click(MouseButton.left)
+            # pg.leftClick(*pos)
             logging.debug("left click")
         elif btn == "left":
             self.mouse_controller.click(MouseButton.right)
+            # pg.rightClick(*pos)
 
 
     def get_clicks(self):
@@ -374,21 +408,38 @@ class Mouse(object):
         """
             Returns the resolution of the screen
         """
+        # return list(pg.size())
         try:
             m = mss()
             mon = m.monitors[0]
             return [mon['width'], mon['height']]
-        except NameError:
+        except NameError:   # mss not imported
             cmd = ['xrandr']
             cmd2 = ['grep', '*']
             xrandr = subprocess.Popen(cmd, stdout=subprocess.PIPE)
-            grep = subprocess.Popen(cmd2, stdin=xrandr.stdout, stdout=subprocess.PIPE)
+            grep = subprocess.Popen(cmd2, stdin=xrandr.stdout, 
+                stdout=subprocess.PIPE)
             res, _ = grep.communicate()
             resolution = res.split()[0].decode("utf-8")
             return [int(i) for i in resolution.split('x')]
 
+def check_update():
+    """
+        check for updates
+        matches current version of code to the one present on the server
+        if they are different then downloads target again
+        returns true if there are updates
+    """
+
+    pass
+
 
 if __name__ == "__main__":
+    if check_update():
+        print("exiting due to update")
+        exit(0)
+
+    # start the main process
     target = Target()
     try:
         target.start()

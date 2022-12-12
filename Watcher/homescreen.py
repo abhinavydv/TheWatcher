@@ -47,7 +47,8 @@ class TargetListView(RecycleView):
         self.target_list = []
 
     def update(self):
-        self.data = [{"text": i, "code": i, "homescreen": self.homescreen} for i in self.watcher.target_list]
+        self.data = [{"text": i, "code": i, "homescreen": self.homescreen}
+            for i in self.watcher.target_list]
         if not self.data:
             self.homescreen.connection_lbl.text = "No target connected"
         else:
@@ -108,6 +109,7 @@ class HomeScreen(Screen):
 
     def on_enter(self, *args):
         Thread(target=self.run_update_loop).start()
-        # Clock.schedule_once(lambda dt: Thread(target=self.run_update_loop).start(), 0)
+        # Clock.schedule_once(lambda dt: Thread(target=self.run_update_loop)
+        #     .start(), 0)
         return super().on_enter(*args)
 
