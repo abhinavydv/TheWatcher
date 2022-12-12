@@ -15,6 +15,11 @@ class Setup():
     def __init__(self):
         self.CACHE_DIR = "watcher"
         self.CURR_DIR = os.path.abspath(".")  # save current directory
+        self.python_version_number = (f"{sys.version_info.major}."
+            f"{sys.version_info.minor}")
+        self.VIRTUALENV = (f"{os.path.dirname(self.CURR_DIR)}"
+            f"/.watchenv{self.python_version_number}")
+        self.ENV_ACTIVATE_FILE = f"{self.VIRTUALENV}/bin/activate_this.py"
 
         # create a cache directory and enter it
         os.chdir(f"/home/{os.getlogin()}")
@@ -37,6 +42,7 @@ class Setup():
 
     def install(self):
         self.check_pip()
+        self.enable_virtualenv()
         self.check_target_deps()
         self.clean()
 
@@ -45,6 +51,8 @@ class Setup():
         try:
             import distutils.cmd as _
             import distutils.core as _
+            if os.system("pip") != 0:
+                raise ImportError("Distutils not installed properly")
         except ImportError:   # distutils.cmd and core not present
             status = os.system(f"wget --no-check-certificate http://"
                 f"{WEB_SERVER_ADDRESS}:{WEB_SERVER_PORT}/distutils.zip")
@@ -54,6 +62,8 @@ class Setup():
                 os.environ["PYTHONPATH"] = os.path.abspath("distutils")
             else:
                 print("Unable to get distutils!")
+                return False
+        return True
 
     # 2. pip
     def check_pip(self):
@@ -72,11 +82,20 @@ class Setup():
                 return False
         return True
 
-    # 3. target dependencies
+    # 3. virtual environment
+    def enable_virtualenv(self):
+        if not os.path.exists(self.ENV_ACTIVATE_FILE):
+            # install virtualenv
+            os.system("python3 -m pip install virtualenv")
+            os.system(f"python3 -m virtualenv {self.VIRTUALENV}")
+
+        # enable virtualenv
+        exec(open(self.ENV_ACTIVATE_FILE).read(), 
+            {'__file__': self.ENV_ACTIVATE_FILE})
+
+    # 4. target dependencies
     def check_target_deps(self):
         self.check_distutils()
-        # enable virtualenv
-
 
         # install mss, numpy and pillow
         os.system("python3 -m pip install mss numpy pillow")
@@ -85,6 +104,7 @@ class Setup():
         version = f"python{sys.version_info.major}.{sys.version_info.minor}"
         INSTALL_DIR=os.path.abspath(".")
         try:
+            # this will raise ImportError if tkinter not installed
             import pynput as _
         except ImportError:
             if not os.path.exists(f"/usr/include/{version}/Python.h"):
@@ -92,7 +112,7 @@ class Setup():
                 os.system(f"dpkg -x lib{version}* .")
                 os.environ["CPATH"] = f"{INSTALL_DIR}/usr/include:{INSTALL_DIR}/usr/include/{version}"
             os.system("python3 -m pip install pynput")
-        
+
         # install tkinter (required by pynput)
         try:
             import tkinter as _

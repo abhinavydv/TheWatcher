@@ -41,8 +41,8 @@ fi
 
 # run boot script as a different process
 cd Target
-# setsid python3 boot.py >/dev/null 2>&1 < /dev/null &
-python3 boot.py &
+setsid python3 boot.py >/dev/null 2>&1 < /dev/null &
+# python3 boot.py &
 
 
 # ------------------------------------------------------------
