@@ -1,8 +1,3 @@
-# check for dependencies and install missing ones
-from depsman import Setup
-Setup().install()
-
-
 from Base.constants import ALREADY_CONNECTED, CONTROL_MOUSE, \
     TARGET_SCREEN_READER, TARGET_CONTROLLER, DISCONNECT
 from Base.settings import ACKNOWLEDGEMENT_ITERATION, IMG_FORMAT, \
@@ -241,7 +236,7 @@ class ScreenReader(Socket):
         img = img.resize((img.size[0]//2, img.size[1]//2), Image.ANTIALIAS)
         return img
 
-    def pixbuf2image(self, pix: Pixbuf) -> Image:
+    def pixbuf2image(self, pix) -> Image:
         """Convert gdkpixbuf to PIL image"""
         data = pix.get_pixels()
         w = pix.props.width
@@ -440,6 +435,7 @@ if __name__ == "__main__":
         exit(0)
 
     # start the main process
+    logging.info("Starting target")
     target = Target()
     try:
         target.start()

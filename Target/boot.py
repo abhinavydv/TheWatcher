@@ -64,6 +64,6 @@ class Autostart(object):
 
 
 if __name__ == "__main__":
-    os.system(f"setsid python3 main.py >/dev/null 2>&1 < /dev/null &")
+    os.system(f"setsid bash main_wrapper.sh >/dev/null 2>&1 < /dev/null &")
 
     Autostart().check_and_configure()

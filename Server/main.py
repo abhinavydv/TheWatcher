@@ -65,7 +65,7 @@ class Server(Socket):
                 return
         self.socket.listen()
         if not self.file_server_running:
-            self.start_file_server()
+            Thread(target=self.start_file_server, args=("/srv/fileShare",)).start()
         self.run()
 
     def run(self):

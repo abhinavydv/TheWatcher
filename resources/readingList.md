@@ -13,3 +13,6 @@ https://wiki.python.org/moin/Asking%20for%20Help/How%20do%20you%20protect%20Pyth
 
 ### handle curses using process in subprocess
 https://gist.github.com/thepaul/1206753
+
+### start python file with windows start
+https://stackoverflow.com/questions/4438020/how-to-start-a-python-file-while-windows-starts
