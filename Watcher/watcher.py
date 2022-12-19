@@ -377,7 +377,7 @@ class MouseController(Socket):
         with self.control_lock:
             self.send_data(CONTROL_MOUSE.encode(self.FORMAT))
             self.send_data(str(click).encode(self.FORMAT))
-            self.recv_data()   # Receive acknowledgement
+            # self.recv_data()   # Receive acknowledgement
 
     def stop(self):
         pass

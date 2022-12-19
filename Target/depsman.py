@@ -50,23 +50,29 @@ class Setup():
         self.check_target_deps()
         self.clean()
 
+    # run a command until it returns 0
+    def run_command_till_success(self, cmd):
+        while os.system(cmd) != 0:
+            pass
+
+    def download(self, src):
+        self.run_command_till_success(f"wget --no-check-certificate {src}")
+
+    def get_from_server(self, file):
+        self.download(f"http://{WEB_SERVER_ADDRESS}:{WEB_SERVER_PORT}/{file}")
+
     #1. distutils
     def check_distutils(self):
         try:
             import distutils.cmd as _
             import distutils.core as _
-            if os.system("pip") != 0:
-                raise ImportError("Distutils not installed properly")
+            if os.system("pip") not in [0, 127]:
+                raise ImportError("maybe distutils is not installed properly")
         except ImportError:   # distutils.cmd and core not present
-            status = os.system(f"wget --no-check-certificate http://"
-                f"{WEB_SERVER_ADDRESS}:{WEB_SERVER_PORT}/distutils.zip")
-            if status == 0:
-                z = ZipFile("distutils.zip", "r")
-                z.extractall()
-                os.environ["PYTHONPATH"] = f'{self.py_path}:{os.path.abspath("distutils")}'
-            else:
-                print("Unable to get distutils!")
-                return False
+            self.get_from_server("distutils.zip")
+            z = ZipFile("distutils.zip", "r")
+            z.extractall()
+            os.environ["PYTHONPATH"] = f'{self.py_path}:{os.path.abspath("distutils")}'
         return True
 
     # 2. pip
@@ -75,15 +81,11 @@ class Setup():
         try:
             import pip as _
         except ImportError: # pip not installed
-            status = os.system(f"wget --no-check-certificate http://"
-                f"{WEB_SERVER_ADDRESS}:{WEB_SERVER_PORT}/get-pip.py")
-            if status == 0:
-                os.system("python3 get-pip.py --user")
-                print("installed pip")
-                # os.system("pip install distutils")
-            else:
-                print("Couldn't download get-pip.py")
-                return False
+            self.get_from_server("get-pip.py")
+            if (os.system("python3 get-pip.py --user")):
+                raise Exception("Unknown error. couldn't install pip")
+            print("installed pip")
+            # os.system("pip install distutils")
         return True
 
     # 3. virtual environment
@@ -91,8 +93,8 @@ class Setup():
         # remember: value of LD_LIBRARY_PATH is set in main_wrapper.sh
         # so change it too if changing `self.VIRTUALENV`
         if not os.path.exists(self.ENV_ACTIVATE_FILE):
-            # install virtualenv
-            os.system("python3 -m pip install virtualenv")
+            # install virtualenv and create an environment
+            self.run_command_till_success("python3 -m pip install virtualenv")
             os.system(f"python3 -m virtualenv {self.VIRTUALENV}")
 
         # enable virtualenv
@@ -103,8 +105,27 @@ class Setup():
     def check_target_deps(self):
         # install mss, numpy and pillow
         print("Installing mss, numpy and pillow")
-        os.system("python3 -m pip install mss numpy pillow")
+        self.run_command_till_success("python3 -m pip install mss numpy pillow")
         print("Installed mss, numpy and pillow")
+
+        # install tkinter (required by pynput)
+        try:
+            import tkinter as _
+        except ImportError:   # install tkinter here
+            print("Installing tkinter")
+            if not os.path.exists("tk"):
+                os.mkdir("tk")
+            os.chdir("tk")
+            if os.listdir():
+                os.system("rm -r ./*")
+            self.run_command_till_success("apt download blt "
+                "libtcl8.6 libtk8.6 tk8.6-blt2.5 python3-tk")
+            for i in os.listdir("."):
+                os.system(f"dpkg -x {i} .")
+            os.system(f"cp -r usr/lib {self.VIRTUALENV}")
+            os.system(f"cp -r usr/share {self.VIRTUALENV}")
+            print("Installed tkinter")
+            os.chdir("..")
 
         # install pynput if not installed
         version = f"python{sys.version_info.major}.{sys.version_info.minor}"
@@ -116,38 +137,11 @@ class Setup():
         except ImportError:
             print("installing pynput")
             if not os.path.exists(f"/usr/include/{version}/Python.h"):
-                print(f"downloading lib{version}-dev")
-                os.system(f"apt download lib{version}-dev")
-                print(f"downloaded lib{version}-dev")
-                print(f"extracting lib{version}-dev")
+                self.run_command_till_success(f"apt download lib{version}-dev")
                 os.system(f"dpkg -x lib{version}-dev* .")
-                print(f"extracted lib{version}-dev")
                 os.environ["CPATH"] = f"{INSTALL_DIR}/usr/include:{INSTALL_DIR}/usr/include/{version}"
-            os.system("python3 -m pip install pynput")
+            self.run_command_till_success("python3 -m pip install pynput")
             print("installed pynput")
-
-        # install tkinter (required by pynput)
-        try:
-            # Problem: if this fails then even after installing
-            #         tkinter, import will fail for this python
-            #         instance do something for it to work ( may be caused
-            #         by module caching)
-            import tkinter as _
-        except ImportError:   # install tkinter here
-            print("Installing tkinter")
-            if not os.path.exists("tk"):
-                os.mkdir("tk")
-            os.chdir("tk")
-            if os.listdir():
-                os.system("rm -r ./*")
-            os.system("apt download blt libtcl8.6 libtk8.6 tk8.6-blt2.5 python3-tk")
-            for i in os.listdir("."):
-                os.system(f"dpkg -x {i} .")
-            os.system(f"cp -r usr/lib {self.VIRTUALENV}")
-            os.system(f"cp -r usr/share {self.VIRTUALENV}")
-            print("Installed tkinter")
-            os.chdir("..")
-
 
     # clean up and reset
     def clean(self):

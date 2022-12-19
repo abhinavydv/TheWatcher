@@ -225,7 +225,7 @@ class Server(Socket):
                 if not self.clicks[code].empty():
                     target.send_data(CONTROL_MOUSE.encode(self.FORMAT))
                     target.send_data(self.clicks[code].get())
-                    target.recv_data()    # reveive 'OK'
+                    # target.recv_data()    # reveive 'OK'
             except (BrokenPipeError, ConnectionResetError):
                 logging.info(f"Connection to target controller client {code} "
                     "failed unexpectedly. Removing it.")
@@ -427,7 +427,7 @@ class Server(Socket):
             if target_code in self.target_controllers:
                 self.clicks[target_code].put(clicks)
 
-        watcher.send_data(b"OK")
+        # watcher.send_data(b"OK")
 
     def start_file_server(self, path):
         """

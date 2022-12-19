@@ -286,13 +286,6 @@ class ScreenReader(Socket):
 
 
 class Controller(Socket):
-    """
-        TODO: Switch from pynput to pyautogui as pyautogui 
-            can be installed easily
-        CON: cannot monitor keyboard. Keylogger will not work. 
-            pynput can be installed only on systems that already have 
-            pip or libpython3-dev installed as it needs Python.h header files.
-    """
 
     def __init__(self) -> None:
         super().__init__(SERVER_ADDRESS, SERVER_PORT)
@@ -328,7 +321,9 @@ class Controller(Socket):
             click = self.recv_data().decode(self.FORMAT)
             # logging.debug(click)
             self.mouse.clicks.put(click)
-            self.send_data(b"OK")
+
+            # TODO: remove acknowledgement as it slows down communication # done
+            # self.send_data(b"OK")
         return True
 
     def run_update_loop(self):

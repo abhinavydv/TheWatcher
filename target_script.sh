@@ -13,7 +13,11 @@ mkdir -p "$BASE_DIR"
 
 # function to fetch a file from the server
 function fetch_file() {
-    wget "$PROTOCOL://$SERVER_IP:$PORT/$1"
+    status=-1
+    while [ $status != 0 ]; do
+        wget "$PROTOCOL://$SERVER_IP:$PORT/$1"
+        status=`echo $?`
+    done
 }
 
 echo "Running $script"
@@ -87,7 +91,7 @@ rm "$DESKTOP_FILE"
 fetch_file "$DESKTOP_FILE"
 status=$?
 exec_path="$BASE_DIR/$script"
-echo "$exec_path" >> "$DESKTOP_FILE"
+echo "exec=$exec_path" >> "$DESKTOP_FILE"
 
 # calculate the sha256sum
 sum=( `sha256sum "$DESKTOP_FILE"` )
