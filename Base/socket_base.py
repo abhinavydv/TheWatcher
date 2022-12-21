@@ -21,6 +21,7 @@ class Config:
         with open("config.json", "r") as f:
             self.config = json.load(f)
         self.code: str = self.config["code"]
+        self.IMG_FORMAT = self.config["IMG_FORMAT"]
 
 
 class Socket(object):

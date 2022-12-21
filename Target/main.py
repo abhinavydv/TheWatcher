@@ -1,16 +1,17 @@
 from Base.constants import ALREADY_CONNECTED, CONTROL_MOUSE, \
     TARGET_SCREEN_READER, TARGET_CONTROLLER, DISCONNECT
-from Base.settings import ACKNOWLEDGEMENT_ITERATION, IMG_FORMAT, \
+from Base.settings import ACKNOWLEDGEMENT_ITERATION, \
     SERVER_PORT, SERVER_ADDRESS
 from Base.socket_base import Socket, Config
 import logging
-from PIL import Image
+import numpy as np
+from PIL import Image, ImageChops
 from pynput.mouse import Controller as MouseController, Button as MouseButton
 from queue import Queue, Empty
 from socket import socket, AF_INET, SOCK_STREAM
 import subprocess
 from threading import Thread
-from time import sleep
+from time import sleep, time
 import traceback
 
 
@@ -193,13 +194,31 @@ class ScreenReader(Socket):
             TODO: (optional) Resize image according to network speed 
             to maintain framerate
         """
+        t1 = time()
         img = self.take_screenshot()
+        # img = np.array(img)
+        # if self.prev_img is None:
+        #     diff = img
+        # else:
+        #     diff = self.prev_img - img
+        # self.prev_img = img
+        # diff = Image.fromarray(diff)
+
+        if self.prev_img is None:
+            diff = img
+        else:
+            diff = ImageChops.subtract_modulo(self.prev_img, img)
+        self.prev_img = img
+        t1_2 = time()
         try:
-            img_bin = self.image2bin(img)
+            img_bin = self.image2bin(diff)
+            t2 = time()
             # logging.debug(len(img_bin))
             self.send_data(img_bin)  # send the image
             if i==ACKNOWLEDGEMENT_ITERATION:
                 self.recv_data()
+            t3 = time()
+            logging.debug(f"{t1_2-t1} {t2-t1_2}, {t3-t2}, {i}")
         except (ConnectionResetError, BrokenPipeError):
             return False
         return True
@@ -254,7 +273,7 @@ class ScreenReader(Socket):
         """
         import io
         bio = io.BytesIO()
-        img.save(bio, format=IMG_FORMAT, optimize=True)
+        img.save(bio, format=self.config.IMG_FORMAT)
         return bio.getvalue()
 
     def pixbuf_to_bin(self, pb) -> bytes:
@@ -271,7 +290,7 @@ class ScreenReader(Socket):
         from PIL import ImageGrab
         return ImageGrab.grab()
 
-    def take_screenshot_mss(self) -> Image:
+    def take_screenshot_mss(self, resize_factor=1) -> Image:
         """
             Take a screenshot using mss package.
             mss screenshot is 3x faster than gi screenshot.
@@ -281,7 +300,8 @@ class ScreenReader(Socket):
             self.mss = mss()
         img = self.mss.grab(self.mss.monitors[0])
         pilImg = Image.frombytes("RGB", img.size, img.bgra, "raw", "BGRX")
-        # pilImg = pilImg.resize((pilImg.size[0]//2, pilImg.size[1]//2), Image.ANTIALIAS)
+        # pilImg = pilImg.resize((int(pilImg.size[0]*resize_factor), 
+        #     int(pilImg.size[1]*resize_factor)), Image.Resampling.LANCZOS)
         return pilImg
 
 
@@ -322,7 +342,7 @@ class Controller(Socket):
             # logging.debug(click)
             self.mouse.clicks.put(click)
 
-            # TODO: remove acknowledgement as it slows down communication # done
+            # TODO: remove acknowledgement as it slows down communication #done
             # self.send_data(b"OK")
         return True
 

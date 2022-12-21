@@ -7,13 +7,20 @@ from Base.settings import SERVER_PORT, SERVER_ADDRESS, WEB_SERVER_ADDRESS, \
 from Base.socket_base import Socket
 import errno
 from http.server import SimpleHTTPRequestHandler
+from io import BytesIO
 from queue import Queue
 import logging
+import numpy as np
+from PIL import Image, ImageChops
 from socket import socket, SO_REUSEADDR, SOL_SOCKET
 from socketserver import TCPServer
 from threading import Thread
-from time import sleep
+from time import sleep, time
 from typing import Dict
+
+
+pil_logger = logging.getLogger("PIL")
+pil_logger.setLevel(logging.INFO)
 
 
 class Server(Socket):
@@ -169,11 +176,39 @@ class Server(Socket):
         target.send_data(b"OK")
         running = True
         i = 0
+        prev_img = None
 
         # while server is running and the target is connected and running
         while running and self.running:
             try:
-                target.img = target.recv_data()
+                t1 = time()
+                diff = target.recv_data()
+                t2 = time()
+                bio = BytesIO(diff)
+
+                diff = Image.open(bio)
+                t3 = time()
+                if prev_img is None:
+                    img = diff
+                else:
+                    img = ImageChops.subtract_modulo(prev_img, diff)
+                t4 = time()
+
+                # diff = np.array(Image.open(bio))
+                # if prev_img is None:
+                #     img = diff
+                # else:
+                #     img = prev_img - diff
+                prev_img = img
+                # img = Image.fromarray(img)
+                bio = BytesIO(b"")
+                img.save(bio, format="JPEG")
+                # target.img = diff
+                target.img = bio.getvalue()
+
+                t5 = time()
+                logging.debug(f"{t2-t1}, {t3-t2}, {t4-t3}, {t5-t4}, {i}")
+
                 target.ready = True
                 i += 1
                 if i==ACKNOWLEDGEMENT_ITERATION:
@@ -355,6 +390,9 @@ class Server(Socket):
                 if target_code not in self.targets:
                     watcher.socket.close()
                     break
+                while not target_screen.ready:
+                    sleep(0.01)
+                target.ready = False
                 watcher.send_data(target_screen.img)
                 i += 1
                 if i==ACKNOWLEDGEMENT_ITERATION:

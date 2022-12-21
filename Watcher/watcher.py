@@ -3,7 +3,7 @@ from typing import List, Tuple
 from Base.socket_base import Socket, Config
 from socket import socket, AF_INET, SOCK_STREAM
 from threading import Lock, Thread
-from Base.settings import IMG_FORMAT, SERVER_PORT, SERVER_ADDRESS, \
+from Base.settings import SERVER_PORT, SERVER_ADDRESS, \
     ACKNOWLEDGEMENT_ITERATION
 from Base.constants import ALREADY_CONNECTED, CONTROL_KEYBOARD, \
     CONTROL_MOUSE, STOP_WATCHING, WATCHER, WATCHER_CONTROLLER, \
