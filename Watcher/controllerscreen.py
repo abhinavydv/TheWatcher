@@ -1,3 +1,4 @@
+from Base.constants import ControlEvents
 from datetime import datetime
 from io import BytesIO
 import logging
@@ -81,7 +82,7 @@ class ControllerScreen(Screen):
         self.mouse_controller = self.watcher.controller.mouse_controller
         self.running = True
         self.run_schedule = Clock.schedule_interval(self.run, 0.05)
-        Window.bind(mouse_pos=self.mouse_controller.update_mouse_pos)
+        Window.bind(mouse_pos=self.on_pointer_move)
 
     def on_touch_down(self, touch: MouseMotionEvent):
         """
@@ -93,19 +94,40 @@ class ControllerScreen(Screen):
         """
         if not self.running:
             return
+        if touch.button is not None:
+            self.mouse_controller.button_down = True
+            self.put_touch_event(touch, ControlEvents.MOUSE_DOWN)
+
+    def on_touch_up(self, touch: MouseMotionEvent):
+        if not self.running:
+            return
+        if touch.button is not None:
+            self.mouse_controller.button_down = False
+            self.put_touch_event(touch, ControlEvents.MOUSE_UP)
+
+    def on_pointer_move(self, _, pos):
+        mouse_pos = self.get_click_pos(pos)
+        if not (0 <= mouse_pos[0] <= 1 and 0 <= mouse_pos[1] <= 1):
+            return
+        if self.mouse_controller.button_down:
+            self.mouse_controller.events.put((ControlEvents.MOUSE_MOVE, None, mouse_pos))
+
+    def put_touch_event(self, touch: MouseMotionEvent, type):
+        click_pos = self.get_click_pos(touch.pos)
+        if not (0 <= click_pos[0] <= 1 and 0 <= click_pos[1] <= 1):
+            return
+
+        self.mouse_controller.events.put((type, touch.button, click_pos))
+
+    def get_click_pos(self, pos):
         img_pos = [(self.img.center_x - self.img.norm_image_size[0]/2), 
             (self.img.center_y - self.img.norm_image_size[1]/2)]
         
         # get relative click position (0, 0) is bottom left and 
         # (1, 1) is top right of target screen
-        click_pos = [(touch.pos[0]-img_pos[0])/self.img.norm_image_size[0], 
-            (touch.pos[1]-img_pos[1])/self.img.norm_image_size[1]]
-        if not (0 <= click_pos[0] <= 1 and 0 <= click_pos[1] <= 1):
-            return
-        if touch.button == "left":
-            self.mouse_controller.clicks.put(("left", click_pos))
-        elif touch.button == "right":
-            self.mouse_controller.clicks.put(("right", click_pos))
+        click_pos = [(pos[0]-img_pos[0])/self.img.norm_image_size[0], 
+            (pos[1]-img_pos[1])/self.img.norm_image_size[1]]
+        return click_pos
 
     def stop(self):
         # stop watching the target

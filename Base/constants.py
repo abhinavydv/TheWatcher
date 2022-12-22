@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+
 TARGET_SCREEN_READER = "TARGET_SCREEN_READER"
 TARGET_CONTROLLER = "TARGET_CONTROLLER"
 DISCONNECT = "DISCONNECT"
@@ -21,3 +23,10 @@ class ImageSendModes(Enum):
     DIRECT_JPG = 0  # send the whole new image
     DIFF = 1        # subtract one image from another and send diff
     CHANGES = 2     # send the changed areas of image
+
+
+@dataclass
+class ControlEvents(object):
+    MOUSE_UP = "MOUSE_UP"
+    MOUSE_DOWN = "MOUSE_DOWN"
+    MOUSE_MOVE = "MOUSE_MOVE"

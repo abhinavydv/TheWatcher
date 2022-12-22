@@ -4,4 +4,4 @@
 - wget
 - unzip (alternative: download another script that 
     downloads all files from server instead of downloading zip)
-- python (try installing on system that don't have it)
+- python >= 3.6

@@ -42,8 +42,8 @@ class Server(Socket):
         # Controllers of all targets which are being watched
         self.target_controllers: Dict[str, Socket] = {}
 
-        # mapping for target and clicks
-        self.clicks: Dict[str, Queue[bytes]] = {}
+        # mapping for target and mouse events
+        self.mouse_events: Dict[str, Queue[bytes]] = {}
 
         # access codes and sockets of all watchers
         self.watchers: Dict[str, Socket] = {}
@@ -124,7 +124,8 @@ class Server(Socket):
     def handle_main_target_client(self, client: Socket):
         """
             The main target client connects, waits for a watcher to start 
-            watching and disconnects the screen reader and controller remain
+            watching, starts screen reader and controller and disconnects
+            itself from the server. The screen reader and controller remain
             connected untill no. of watchers watching this target client is 
             at least 1. After no watcher is watching, the screen reader and 
             controller also disconnect and the main target client connects 
@@ -251,7 +252,7 @@ class Server(Socket):
             target.socket.close()
             return False
         self.target_controllers[code] = target
-        self.clicks[code] = Queue(0)
+        self.mouse_events[code] = Queue(0)
         target.send_data(b"OK")
 
         running = True
@@ -259,9 +260,9 @@ class Server(Socket):
 
             try:
                 # handle mouse events
-                if not self.clicks[code].empty():
+                if not self.mouse_events[code].empty():
                     target.send_data(CONTROL_MOUSE.encode(self.FORMAT))
-                    target.send_data(self.clicks[code].get())
+                    target.send_data(self.mouse_events[code].get())
                     # target.recv_data()    # reveive 'OK'
             except (BrokenPipeError, ConnectionResetError):
                 logging.info(f"Connection to target controller client {code} "
@@ -272,7 +273,7 @@ class Server(Socket):
                 running = self.targets[code].running
             except KeyError:
                 break
-            sleep(0.001)
+            sleep(0.0001)
 
         target.socket.close()
         del self.target_controllers[code]
@@ -463,9 +464,9 @@ class Server(Socket):
 
         # handle mouse controller requests
         if control_type == CONTROL_MOUSE:
-            clicks = watcher.recv_data()
+            mouse_event = watcher.recv_data()
             if target_code in self.target_controllers:
-                self.clicks[target_code].put(clicks)
+                self.mouse_events[target_code].put(mouse_event)
 
         # watcher.send_data(b"OK")
 

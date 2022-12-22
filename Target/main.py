@@ -1,5 +1,6 @@
 from Base.constants import ALREADY_CONNECTED, CONTROL_MOUSE, \
-    TARGET_SCREEN_READER, TARGET_CONTROLLER, DISCONNECT, ImageSendModes
+    TARGET_SCREEN_READER, TARGET_CONTROLLER, DISCONNECT, ImageSendModes, \
+    ControlEvents
 from Base.settings import ACKNOWLEDGEMENT_ITERATION, \
     SERVER_PORT, SERVER_ADDRESS, IMAGE_SEND_MODE
 from Base.socket_base import Socket, Config
@@ -193,7 +194,7 @@ class ScreenReader(Socket):
             TODO: (optional) Resize image according to network speed 
             to maintain framerate
         """
-        # t1 = time()
+        t1 = time()
         img = self.take_screenshot()
 
         if IMAGE_SEND_MODE == ImageSendModes.DIRECT_JPG:
@@ -219,11 +220,15 @@ class ScreenReader(Socket):
             # t2 = time()
             if IMAGE_SEND_MODE in (ImageSendModes.DIFF, ImageSendModes.DIRECT_JPG):
                 self.send_data(img_bin)  # send the image
-                logging.debug(f"{len(img_bin)/1024}")
+                # logging.debug(f"{len(img_bin)/1024}")
 
             if i==ACKNOWLEDGEMENT_ITERATION:
                 self.recv_data()
-            # t3 = time()
+            t3 = time()
+
+            # to eat less cpu
+            if t3-t1 < 0.4:
+                sleep(0.1)
             # logging.debug(f"{t1_2-t1} {t2-t1_2}, {t3-t2}, {len(img_bin)/1024}, {i}")
         except (ConnectionResetError, BrokenPipeError):
             return False
@@ -366,6 +371,7 @@ class Controller(Socket):
         self.running = True
         while self.running:
             self.mouse.update()
+            self.keyboard.update()
             sleep(0.001)
 
     def stop(self):
@@ -378,6 +384,9 @@ class Keyboard(object):
         # self.key_controller = KeyController()
         pass
 
+    def update(self):
+        pass
+
 
 class Mouse(object):
 
@@ -386,6 +395,15 @@ class Mouse(object):
         self.clicks = Queue()
         self.screen_size = self.get_screen_size()
         logging.debug(self.screen_size)
+        self.btns = {
+            "left": MouseButton.left,
+            "right": MouseButton.right,
+            "middle": MouseButton.middle,
+            "scrolldown": MouseButton.scroll_down,
+            "scrollup": MouseButton.scroll_up,
+            "scrollleft": MouseButton.scroll_left,
+            "scrollright": MouseButton.scroll_right,
+        }
 
     def update(self):
         """
@@ -395,24 +413,19 @@ class Mouse(object):
             return
         self.screen_size = self.get_screen_size()
         click = eval(self.clicks.get())
-        logging.debug(str(click))
-        btn = click[0]
-        rel_pos = click[1]
+        # logging.debug(str(click))
+        ev_type = click[0]
+        btn = click[1]
+        rel_pos = click[2]
         pos = (
             rel_pos[0]*self.screen_size[0],
             (1-rel_pos[1])*self.screen_size[1]
         )
         self.mouse_controller.position = pos
-        # pg.moveTo(*pos)
-        # sleep(0.01)
-        if btn == "left":
-            self.mouse_controller.click(MouseButton.left)
-            # pg.leftClick(*pos)
-            logging.debug("left click")
-        elif btn == "left":
-            self.mouse_controller.click(MouseButton.right)
-            # pg.rightClick(*pos)
-
+        if ev_type == ControlEvents.MOUSE_DOWN:
+            self.mouse_controller.press(self.btns[btn])
+        elif ev_type == ControlEvents.MOUSE_UP:
+            self.mouse_controller.release(self.btns[btn])
 
     def get_clicks(self):
         """
@@ -450,7 +463,7 @@ def check_update():
     """
         check for updates
         matches current version of code to the one present on the server
-        if they are different then downloads target again
+        if they are different then download target again
         returns true if there are updates
     """
 

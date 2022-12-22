@@ -7,7 +7,7 @@ from Base.settings import SERVER_PORT, SERVER_ADDRESS, \
     ACKNOWLEDGEMENT_ITERATION
 from Base.constants import ALREADY_CONNECTED, CONTROL_KEYBOARD, \
     CONTROL_MOUSE, STOP_WATCHING, WATCHER, WATCHER_CONTROLLER, \
-    WATCHER_SCREEN_READER, SEND_TARGET_LIST
+    WATCHER_SCREEN_READER, SEND_TARGET_LIST, ControlEvents
 import logging
 from pynput.keyboard import Listener, Key, KeyCode
 from queue import Queue, Empty
@@ -342,11 +342,15 @@ class MouseController(Socket):
         The clicks queue is updated by the GUI.
     """
 
+    UP = "up"
+    DOWN = "down"
+
     def __init__(self, socket: socket, lock: Lock) -> None:
         super().__init__(SERVER_ADDRESS, SERVER_PORT, socket)
-        self.clicks = Queue(0)
+        self.events = Queue(0)
         self.pos: Tuple[int, int] = (0, 0)
         self.control_lock = lock
+        self.button_down = False
 
     def start(self):
         pass
@@ -357,27 +361,42 @@ class MouseController(Socket):
         """
         self.pos = pos
 
-    def get_clicks(self):
+    def get_events(self):
         """
             Gets clicks from queue and returns a list containing the clicks
         """
         l = []
-        while not self.clicks.empty():
-            l.append(self.clicks.get_nowait())
+        while not self.events.empty():
+            l.append(self.events.get_nowait())
         return l
 
     def update(self):
         """
             Sends only one click at a time
         """
-        if self.clicks.empty():
-            return
-        click = self.clicks.get_nowait()
-        logging.debug(click)
-        with self.control_lock:
-            self.send_data(CONTROL_MOUSE.encode(self.FORMAT))
-            self.send_data(str(click).encode(self.FORMAT))
-            # self.recv_data()   # Receive acknowledgement
+
+        """ One at a time method """
+        # if self.events.empty():
+        #     return
+        # event = self.events.get_nowait()
+        # logging.debug(event)
+        # with self.control_lock:
+        #     self.send_data(CONTROL_MOUSE.encode(self.FORMAT))
+        #     self.send_data(str(event).encode(self.FORMAT))
+        #     # self.recv_data()   # Receive acknowledgement
+
+        """ Many at a time method """
+        events = self.get_events()
+        ln = len(events)
+        for i, event in enumerate(events):
+            if (i < ln-1) and \
+                    (event[0] == ControlEvents.MOUSE_MOVE == events[i+1][0]):
+                sleep(0.01)
+                continue
+            with self.control_lock:
+                self.send_data(CONTROL_MOUSE.encode(self.FORMAT))
+                self.send_data(str(event).encode(self.FORMAT))
+
 
     def stop(self):
         pass
