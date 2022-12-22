@@ -1,4 +1,5 @@
 from socket import getaddrinfo, AF_INET, AF_INET6
+from Base.constants import ImageSendModes
 
 
 ADDRESS_TYPE = AF_INET
@@ -12,3 +13,4 @@ SERVER_PORT = 11419
 WEB_SERVER_ADDRESS = SERVER_ADDRESS
 WEB_SERVER_PORT = 8080
 ACKNOWLEDGEMENT_ITERATION = 10
+IMAGE_SEND_MODE = ImageSendModes.DIRECT_JPG

@@ -1,7 +1,7 @@
 from Base.constants import ALREADY_CONNECTED, CONTROL_MOUSE, \
-    TARGET_SCREEN_READER, TARGET_CONTROLLER, DISCONNECT
+    TARGET_SCREEN_READER, TARGET_CONTROLLER, DISCONNECT, ImageSendModes
 from Base.settings import ACKNOWLEDGEMENT_ITERATION, \
-    SERVER_PORT, SERVER_ADDRESS
+    SERVER_PORT, SERVER_ADDRESS, IMAGE_SEND_MODE
 from Base.socket_base import Socket, Config
 import logging
 import numpy as np
@@ -193,38 +193,44 @@ class ScreenReader(Socket):
             TODO: (optional) Resize image according to network speed 
             to maintain framerate
         """
-        t1 = time()
+        # t1 = time()
         img = self.take_screenshot()
 
-        # img = np.array(img)
-        # if self.prev_img is None:
-        #     diff = img
-        # else:
-        #     diff = self.prev_img - img
-        # self.prev_img = img
-        # diff = Image.fromarray(diff)
-
-        if self.prev_img is None:
-            diff = img
-        else:
-            diff = ImageChops.subtract_modulo(self.prev_img, img)
-        # diff = Image.fromarray(np.array(diff))
-        self.prev_img = img
-        t1_2 = time()
-        try:
+        if IMAGE_SEND_MODE == ImageSendModes.DIRECT_JPG:
+            img_bin = self.image2bin(img)
+        elif IMAGE_SEND_MODE == ImageSendModes.DIFF:
+            if self.prev_img is None:
+                diff = img
+            else:
+                diff = ImageChops.subtract_modulo(self.prev_img, img)
+            # diff = Image.fromarray(np.array(diff))
+            self.prev_img = img
+            # t1_2 = time()
             img_bin = self.image2bin(diff)
-            # with open(f"diff{i}.png", "wb") as f:
-            #     f.write(img_bin)
-            t2 = time()
-            # logging.debug(len(img_bin))
-            self.send_data(img_bin)  # send the image
+        elif IMAGE_SEND_MODE == ImageSendModes.CHANGES:
+            # TODO: Complete this option
+            if self.prev_img is None:
+                self.prev_img = img
+                img_bins = [([0, 0, *Mouse.get_screen_size()], 
+                    self.image2bin(img))]
+            else:
+                img_bins = self.get_all_diffs()
+        try:
+            # t2 = time()
+            if IMAGE_SEND_MODE in (ImageSendModes.DIFF, ImageSendModes.DIRECT_JPG):
+                self.send_data(img_bin)  # send the image
+                logging.debug(f"{len(img_bin)/1024}")
+
             if i==ACKNOWLEDGEMENT_ITERATION:
                 self.recv_data()
-            t3 = time()
-            logging.debug(f"{t1_2-t1} {t2-t1_2}, {t3-t2}, {len(img_bin)/1024}, {i}")
+            # t3 = time()
+            # logging.debug(f"{t1_2-t1} {t2-t1_2}, {t3-t2}, {len(img_bin)/1024}, {i}")
         except (ConnectionResetError, BrokenPipeError):
             return False
         return True
+
+    def get_all_diffs(self, prev_img, img):
+        pass
 
     def stop(self) -> None:
         """
@@ -276,7 +282,10 @@ class ScreenReader(Socket):
         """
         import io
         bio = io.BytesIO()
-        img.save(bio, format=self.config.IMG_FORMAT)
+        if IMAGE_SEND_MODE == ImageSendModes.DIRECT_JPG:
+            img.save(bio, format="JPEG", quality=15)
+        else:
+            img.save(bio, format=self.config.IMG_FORMAT)
         return bio.getvalue()
 
     def pixbuf_to_bin(self, pb) -> bytes:
@@ -417,7 +426,8 @@ class Mouse(object):
                 break
         return clicks
 
-    def get_screen_size(self):
+    @staticmethod
+    def get_screen_size():
         """
             Returns the resolution of the screen
         """

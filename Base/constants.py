@@ -14,3 +14,10 @@ WATCH_BY_CODE = "WATCH_BY_CODE"
 STOP_WATCHING = "STOP_WATCHING"
 CONTROL_KEYBOARD = "CONTROL_KEYBOARD"
 CONTROL_MOUSE = "CONTROL_MOUSE"
+
+
+from enum import Enum
+class ImageSendModes(Enum):
+    DIRECT_JPG = 0  # send the whole new image
+    DIFF = 1        # subtract one image from another and send diff
+    CHANGES = 2     # send the changed areas of image

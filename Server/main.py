@@ -1,9 +1,9 @@
 from Base.constants import CONTROL_MOUSE, STOP_WATCHING, TARGET_RUNNING, \
     TARGET_SCREEN_READER, TARGET_CONTROLLER, DISCONNECT, TARGET_WAITING, \
     WATCHER, WATCHER_CONTROLLER, WATCHER_SCREEN_READER, \
-    SEND_TARGET_LIST, ALREADY_CONNECTED
+    SEND_TARGET_LIST, ALREADY_CONNECTED, ImageSendModes
 from Base.settings import SERVER_PORT, SERVER_ADDRESS, WEB_SERVER_ADDRESS, \
-    WEB_SERVER_PORT, ACKNOWLEDGEMENT_ITERATION, ADDRESS_TYPE
+    WEB_SERVER_PORT, ACKNOWLEDGEMENT_ITERATION, ADDRESS_TYPE, IMAGE_SEND_MODE
 from Base.socket_base import Socket
 import errno
 from http.server import SimpleHTTPRequestHandler
@@ -180,33 +180,36 @@ class Server(Socket):
         # while server is running and the target is connected and running
         while running and self.running:
             try:
-                t1 = time()
-                diff = target.recv_data()
-                t2 = time()
-                bio = BytesIO(diff)
+                if IMAGE_SEND_MODE == ImageSendModes.DIRECT_JPG:
+                    target.img = target.recv_data()
+                elif IMAGE_SEND_MODE == ImageSendModes.DIFF:
+                    t1 = time()
+                    diff = target.recv_data()
+                    t2 = time()
+                    bio = BytesIO(diff)
 
-                diff = Image.open(bio)
-                t3 = time()
-                if prev_img is None:
-                    img = diff
-                else:
-                    img = ImageChops.subtract_modulo(prev_img, diff)
-                t4 = time()
+                    diff = Image.open(bio)
+                    t3 = time()
+                    if prev_img is None:
+                        img = diff
+                    else:
+                        img = ImageChops.subtract_modulo(prev_img, diff)
+                    t4 = time()
 
-                # diff = np.array(Image.open(bio))
-                # if prev_img is None:
-                #     img = diff
-                # else:
-                #     img = prev_img - diff
-                prev_img = img
-                # img = Image.fromarray(img)
-                bio = BytesIO(b"")
-                img.save(bio, format="JPEG")
-                # target.img = diff
-                target.img = bio.getvalue()
+                    # diff = np.array(Image.open(bio))
+                    # if prev_img is None:
+                    #     img = diff
+                    # else:
+                    #     img = prev_img - diff
+                    prev_img = img
+                    # img = Image.fromarray(img)
+                    bio = BytesIO(b"")
+                    img.save(bio, format="JPEG")
+                    # target.img = diff
+                    target.img = bio.getvalue()
 
-                t5 = time()
-                logging.debug(f"{t2-t1}, {t3-t2}, {t4-t3}, {t5-t4}, {i}")
+                    t5 = time()
+                    logging.debug(f"{t2-t1}, {t3-t2}, {t4-t3}, {t5-t4}, {i}")
 
                 target.ready = True
                 i += 1
