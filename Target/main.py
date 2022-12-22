@@ -8,7 +8,6 @@ import numpy as np
 from PIL import Image, ImageChops
 from pynput.mouse import Controller as MouseController, Button as MouseButton
 from queue import Queue, Empty
-from socket import socket, AF_INET, SOCK_STREAM
 import subprocess
 from threading import Thread
 from time import sleep, time
@@ -101,7 +100,7 @@ class Target(Socket):
         while self.running:
             try:
                 self.socket.close()
-                self.socket = socket(AF_INET, SOCK_STREAM)
+                self.socket = self.new_socket()
                 logging.info("Connecting")
                 self.socket.connect(self.addr)
                 logging.info("Connected")
@@ -196,6 +195,7 @@ class ScreenReader(Socket):
         """
         t1 = time()
         img = self.take_screenshot()
+
         # img = np.array(img)
         # if self.prev_img is None:
         #     diff = img
@@ -208,17 +208,20 @@ class ScreenReader(Socket):
             diff = img
         else:
             diff = ImageChops.subtract_modulo(self.prev_img, img)
+        # diff = Image.fromarray(np.array(diff))
         self.prev_img = img
         t1_2 = time()
         try:
             img_bin = self.image2bin(diff)
+            # with open(f"diff{i}.png", "wb") as f:
+            #     f.write(img_bin)
             t2 = time()
             # logging.debug(len(img_bin))
             self.send_data(img_bin)  # send the image
             if i==ACKNOWLEDGEMENT_ITERATION:
                 self.recv_data()
             t3 = time()
-            logging.debug(f"{t1_2-t1} {t2-t1_2}, {t3-t2}, {i}")
+            logging.debug(f"{t1_2-t1} {t2-t1_2}, {t3-t2}, {len(img_bin)/1024}, {i}")
         except (ConnectionResetError, BrokenPipeError):
             return False
         return True

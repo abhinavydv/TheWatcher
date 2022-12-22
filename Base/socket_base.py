@@ -1,4 +1,5 @@
-from socket import socket, AF_INET, SOCK_STREAM
+from socket import socket, SOCK_STREAM
+from Base.settings import ADDRESS_TYPE
 import platform
 import logging
 import json
@@ -37,7 +38,7 @@ class Socket(object):
         if skt:
             self.socket = skt
         else:
-            self.socket = socket(AF_INET, SOCK_STREAM)
+            self.socket = self.new_socket()
         self.platform = platform.platform().lower()
         self.IP = IP
         self.port = port
@@ -87,6 +88,9 @@ class Socket(object):
             data += temp
 
         return data
+
+    def new_socket(self):
+        return socket(ADDRESS_TYPE, SOCK_STREAM)
 
     def run(self):
         pass

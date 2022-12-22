@@ -3,15 +3,14 @@ from Base.constants import CONTROL_MOUSE, STOP_WATCHING, TARGET_RUNNING, \
     WATCHER, WATCHER_CONTROLLER, WATCHER_SCREEN_READER, \
     SEND_TARGET_LIST, ALREADY_CONNECTED
 from Base.settings import SERVER_PORT, SERVER_ADDRESS, WEB_SERVER_ADDRESS, \
-    WEB_SERVER_PORT, ACKNOWLEDGEMENT_ITERATION
+    WEB_SERVER_PORT, ACKNOWLEDGEMENT_ITERATION, ADDRESS_TYPE
 from Base.socket_base import Socket
 import errno
 from http.server import SimpleHTTPRequestHandler
 from io import BytesIO
 from queue import Queue
 import logging
-import numpy as np
-from PIL import Image, ImageChops
+from PIL import Image, ImageChops, UnidentifiedImageError
 from socket import socket, SO_REUSEADDR, SOL_SOCKET
 from socketserver import TCPServer
 from threading import Thread
@@ -215,8 +214,8 @@ class Server(Socket):
                     target.send_data(b"OK")
                     i = 0
                 running = self.targets[code].running
-                
-            except (BrokenPipeError, ConnectionResetError, KeyError): 
+
+            except (BrokenPipeError, ConnectionResetError, KeyError, UnidentifiedImageError): 
                 # client disconnected
                 logging.info(f"Removing target screen reader client {code}")
                 break
@@ -476,7 +475,7 @@ class Server(Socket):
             *args, directory=path, **kwargs
         )
 
-        with TCPServer((WEB_SERVER_ADDRESS, WEB_SERVER_PORT), Handler) as server:
+        with CustomTCPServer((WEB_SERVER_ADDRESS, WEB_SERVER_PORT), Handler) as server:
             self.file_server_running = True
             self.file_server = server
             server.allow_reuse_address = True
@@ -489,6 +488,10 @@ class Server(Socket):
             pass
         self.running = False
         self.socket.close()
+
+
+class CustomTCPServer(TCPServer):
+    address_family = ADDRESS_TYPE
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 from time import sleep
 from typing import List, Tuple
 from Base.socket_base import Socket, Config
-from socket import socket, AF_INET, SOCK_STREAM
+from socket import socket
 from threading import Lock, Thread
 from Base.settings import SERVER_PORT, SERVER_ADDRESS, \
     ACKNOWLEDGEMENT_ITERATION
@@ -38,7 +38,7 @@ class Watcher(Socket):
                 "Cannot start again.")
             raise Exception("Watcher started without stopping")
         self.socket.close()     # close socket if already open
-        self.socket = socket(AF_INET, SOCK_STREAM)
+        self.socket = self.new_socket()
         logging.info("Starting Watcher")
         try:
             self.socket.connect(self.addr)
