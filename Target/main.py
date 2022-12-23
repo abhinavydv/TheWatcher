@@ -1,6 +1,5 @@
-from Base.constants import ALREADY_CONNECTED, CONTROL_MOUSE, \
-    TARGET_SCREEN_READER, TARGET_CONTROLLER, DISCONNECT, ImageSendModes, \
-    ControlEvents
+from Base.constants import ImageSendModes, ControlEvents, Reasons, \
+    Actions, ClientTypes, ControlDevice
 from Base.settings import ACKNOWLEDGEMENT_ITERATION, \
     SERVER_PORT, SERVER_ADDRESS, IMAGE_SEND_MODE
 from Base.socket_base import Socket, Config
@@ -113,7 +112,7 @@ class Target(Socket):
                 logging.info("Waiting")
                 while data == b"WAIT":
                     data = self.recv_data()
-                if data == ALREADY_CONNECTED.encode(self.FORMAT):
+                if data == Reasons.ALREADY_CONNECTED:
                     logging.info("Stopping as another client with same target"
                     " code is already connected")
                     self.stop()
@@ -175,12 +174,12 @@ class ScreenReader(Socket):
             was established else False
         """
         self.socket.connect(self.addr)
-        self.send_data(TARGET_SCREEN_READER.encode(self.FORMAT))
+        self.send_data(ClientTypes.TARGET_SCREEN_READER)
         self.send_data(self.config.code.encode(self.FORMAT))
         data = self.recv_data()
         if data == b"OK":
             return True
-        elif data == ALREADY_CONNECTED:
+        elif data == Reasons.ALREADY_CONNECTED:
             return False
         return False
 
@@ -337,13 +336,13 @@ class Controller(Socket):
             connection is successfull else False.
         """
         self.socket.connect(self.addr)
-        self.send_data(TARGET_CONTROLLER.encode(self.FORMAT))
+        self.send_data(ClientTypes.TARGET_CONTROLLER)
         self.send_data(self.config.code.encode(self.FORMAT))
         data = self.recv_data()
         if data == b"OK":
             self.running = True
             return True
-        elif data == ALREADY_CONNECTED:
+        elif data == Reasons.ALREADY_CONNECTED:
             return False
         return False
 
@@ -352,12 +351,11 @@ class Controller(Socket):
             Receive control requests and put them in corresponding
             queues based on `control_type`
         """
-        control_type = self.recv_data().decode(self.FORMAT)
+        control_type = self.recv_data()
 
-        if control_type == CONTROL_MOUSE:
-            click = self.recv_data().decode(self.FORMAT)
-            # logging.debug(click)
-            self.mouse.clicks.put(click)
+        if control_type == ControlDevice.CONTROL_MOUSE:
+            event = self.recv_data()
+            self.mouse.events.put(event)
 
             # TODO: remove acknowledgement as it slows down communication #done
             # self.send_data(b"OK")
@@ -392,9 +390,9 @@ class Mouse(object):
 
     def __init__(self) -> None:
         self.mouse_controller = MouseController()
-        self.clicks = Queue()
+        self.events = Queue()
         self.screen_size = self.get_screen_size()
-        logging.debug(self.screen_size)
+        logging.debug(f"screen size: {self.screen_size}")
         self.btns = {
             "left": MouseButton.left,
             "right": MouseButton.right,
@@ -409,14 +407,14 @@ class Mouse(object):
         """
             Fetch mouse control requests from queue and handle them.
         """
-        if self.clicks.empty():
+        if self.events.empty():
             return
         self.screen_size = self.get_screen_size()
-        click = eval(self.clicks.get())
-        # logging.debug(str(click))
-        ev_type = click[0]
-        btn = click[1]
-        rel_pos = click[2]
+        event = eval(self.events.get())
+        # logging.debug(str(event))
+        ev_type = event[0]
+        btn = event[1]
+        rel_pos = event[2]
         pos = (
             rel_pos[0]*self.screen_size[0],
             (1-rel_pos[1])*self.screen_size[1]
@@ -432,9 +430,9 @@ class Mouse(object):
             Fetches requests from queue and returns them as a list
         """
         clicks = []
-        while not self.clicks.empty():
+        while not self.events.empty():
             try:
-                clicks.append(self.clicks.get_nowait())
+                clicks.append(self.events.get_nowait())
             except Empty:
                 break
         return clicks

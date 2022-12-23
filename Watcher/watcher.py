@@ -5,9 +5,8 @@ from socket import socket
 from threading import Lock, Thread
 from Base.settings import SERVER_PORT, SERVER_ADDRESS, \
     ACKNOWLEDGEMENT_ITERATION
-from Base.constants import ALREADY_CONNECTED, CONTROL_KEYBOARD, \
-    CONTROL_MOUSE, STOP_WATCHING, WATCHER, WATCHER_CONTROLLER, \
-    WATCHER_SCREEN_READER, SEND_TARGET_LIST, ControlEvents
+from Base.constants import ControlEvents, Reasons, Actions, \
+    ClientTypes, ControlDevice, Status
 import logging
 from pynput.keyboard import Listener, Key, KeyCode
 from queue import Queue, Empty
@@ -51,12 +50,12 @@ class Watcher(Socket):
 
         try:
             # send this client's type
-            self.send_data(WATCHER.encode(self.FORMAT))
+            self.send_data(ClientTypes.WATCHER)
 
             # send this client's unique code
             self.send_data(self.config.code.encode(self.FORMAT))
-            ack = self.recv_data().decode(self.FORMAT)    # receive "OK"
-            if ack == ALREADY_CONNECTED:
+            ack = self.recv_data()    # receive "OK" or reason
+            if ack == Reasons.ALREADY_CONNECTED:
                 logging.info("Already connected to server. "
                     "Cannot connect again")
                 return False
@@ -76,7 +75,7 @@ class Watcher(Socket):
         """
         while self.running:
             with self.request_lock:
-                self.send_data(SEND_TARGET_LIST.encode(self.FORMAT))
+                self.send_data(Actions.SEND_TARGET_LIST)
                 try:
                     target_list = self.recv_data().decode(self.FORMAT)
                 except OSError:
@@ -116,7 +115,7 @@ class Watcher(Socket):
         self.watching = False
         with self.request_lock:
             try:
-                self.send_data(STOP_WATCHING.encode(self.FORMAT))
+                self.send_data(Actions.STOP_WATCHING)
             except (BrokenPipeError, ConnectionResetError):
                 pass
 
@@ -158,7 +157,7 @@ class ScreenReader(Socket):
         logging.info("Connected to server")
 
         try:
-            self.send_data(WATCHER_SCREEN_READER.encode(self.FORMAT))
+            self.send_data(ClientTypes.WATCHER_SCREEN_READER)
             self.send_data(self.config.code.encode(self.FORMAT))
             self.send_data(self.target_code.encode(self.FORMAT))
             self.recv_data().decode(self.FORMAT)  # receive "OK"
@@ -244,10 +243,10 @@ class Controller(Socket):
 
         self.mouse_controller.start()
         try:
-            self.send_data(WATCHER_CONTROLLER.encode(self.FORMAT))
+            self.send_data(ClientTypes.WATCHER_CONTROLLER)
             self.send_data(self.config.code.encode(self.FORMAT))
             self.send_data(self.target_code.encode(self.FORMAT))
-            self.recv_data().decode(self.FORMAT)  # receive "OK"
+            self.recv_data()  # receive b"OK"
         except (BrokenPipeError, ConnectionResetError):
             # logging.debug(traceback.format_exc())
             logging.fatal("Connection to server closed unexpectedly. Aborting")
@@ -319,7 +318,7 @@ class KeyboardController(Socket):
         """
         if not self.keys.empty():
             with self.control_lock:
-                self.send_data(CONTROL_KEYBOARD.encode(self.FORMAT))
+                self.send_data(ControlDevice.CONTROL_KEYBOARD)
                 keys = self.get_keys()
                 self.send_data(" ".join(keys).encode(self.FORMAT))
 
@@ -387,14 +386,16 @@ class MouseController(Socket):
 
         """ Many at a time method """
         events = self.get_events()
+        # logging.debug(events)
         ln = len(events)
         for i, event in enumerate(events):
+            events.extend(self.get_events())
             if (i < ln-1) and \
                     (event[0] == ControlEvents.MOUSE_MOVE == events[i+1][0]):
-                sleep(0.01)
+                sleep(0.001)
                 continue
             with self.control_lock:
-                self.send_data(CONTROL_MOUSE.encode(self.FORMAT))
+                self.send_data(ControlDevice.CONTROL_MOUSE)
                 self.send_data(str(event).encode(self.FORMAT))
 
 

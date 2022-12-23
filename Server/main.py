@@ -1,7 +1,5 @@
-from Base.constants import CONTROL_MOUSE, STOP_WATCHING, TARGET_RUNNING, \
-    TARGET_SCREEN_READER, TARGET_CONTROLLER, DISCONNECT, TARGET_WAITING, \
-    WATCHER, WATCHER_CONTROLLER, WATCHER_SCREEN_READER, \
-    SEND_TARGET_LIST, ALREADY_CONNECTED, ImageSendModes
+from Base.constants import ImageSendModes, Reasons, Actions, \
+    ClientTypes, ControlDevice, ControlEvents, Status
 from Base.settings import SERVER_PORT, SERVER_ADDRESS, WEB_SERVER_ADDRESS, \
     WEB_SERVER_PORT, ACKNOWLEDGEMENT_ITERATION, ADDRESS_TYPE, IMAGE_SEND_MODE
 from Base.socket_base import Socket
@@ -103,17 +101,17 @@ class Server(Socket):
         # get the client type and run the respective function
         if client_t == b'Hi!':
             self.handle_main_target_client(client)
-        elif client_t == TARGET_SCREEN_READER.encode(self.FORMAT):
+        elif client_t == ClientTypes.TARGET_SCREEN_READER:
             self.handle_target_screen_reader_client(client)
-        elif client_t == TARGET_CONTROLLER.encode(self.FORMAT):
+        elif client_t == ClientTypes.TARGET_CONTROLLER:
             self.handle_target_controller_client(client)
-        elif client_t == WATCHER.encode(self.FORMAT):
+        elif client_t == ClientTypes.WATCHER:
             self.handle_main_watcher_client(client)
-        elif client_t == WATCHER_SCREEN_READER.encode(self.FORMAT):
+        elif client_t == ClientTypes.WATCHER_SCREEN_READER:
             self.handle_watcher_screen_reader_client(client)
-        elif client_t == WATCHER_CONTROLLER.encode(self.FORMAT):
+        elif client_t == ClientTypes.WATCHER_CONTROLLER:
             self.handle_watcher_controller_client(client)
-        elif client_t == "":
+        elif client_t == b"":
             logging.info("Client sent no client type.. disconnecting")
             client.socket.close()
             return
@@ -136,7 +134,7 @@ class Server(Socket):
 
         # don't allow two target clients with same code to connect
         if code in self.targets:
-            client.send_data(ALREADY_CONNECTED.encode(self.FORMAT))
+            client.send_data(Reasons.ALREADY_CONNECTED)
             logging.info(f"Not allowing target {code} to connect "
             "as it is already connected")
             client.socket.close()
@@ -144,11 +142,11 @@ class Server(Socket):
         client.watchers = 0     # No. of watchers wathing this target
         client.code = code
         client.running = True
-        client.status = TARGET_WAITING
+        client.status = Status.TARGET_WAITING
         self.targets[code] = client
         try:
             # wait untill a watcher starts to watch
-            while client.status == TARGET_WAITING and self.running:
+            while client.status == Status.TARGET_WAITING and self.running:
                 client.send_data(b"WAIT")
                 sleep(1)
             client.send_data(b"OK")
@@ -167,7 +165,7 @@ class Server(Socket):
         if code in self.target_screens:
             logging.info("Not allowing target screen reader {code} "
                 "to connect as it is already connected")
-            target.send_data(ALREADY_CONNECTED.encode(self.FORMAT))
+            target.send_data(Reasons.ALREADY_CONNECTED)
             target.socket.close()
             return False
         target.img = b""
@@ -248,7 +246,7 @@ class Server(Socket):
         if code in self.target_controllers:
             logging.info("Not allowing target controller {code} to "
                 "connect as it is already connected")
-            target.send_data(ALREADY_CONNECTED.encode(self.FORMAT))
+            target.send_data(Reasons.ALREADY_CONNECTED)
             target.socket.close()
             return False
         self.target_controllers[code] = target
@@ -261,7 +259,7 @@ class Server(Socket):
             try:
                 # handle mouse events
                 if not self.mouse_events[code].empty():
-                    target.send_data(CONTROL_MOUSE.encode(self.FORMAT))
+                    target.send_data(ControlDevice.CONTROL_MOUSE)
                     target.send_data(self.mouse_events[code].get())
                     # target.recv_data()    # reveive 'OK'
             except (BrokenPipeError, ConnectionResetError):
@@ -293,7 +291,7 @@ class Server(Socket):
             if code in self.watchers:
                 logging.info("Not allowing watcher {code} "
                     "to connect as it is already connected")
-                watcher.send_data(ALREADY_CONNECTED.encode(self.FORMAT))
+                watcher.send_data(Reasons.ALREADY_CONNECTED)
                 watcher.socket.close()
                 return False
             watcher.send_data(b"OK")
@@ -306,8 +304,8 @@ class Server(Socket):
 
         while self.running:
             try:
-                request = watcher.recv_data().decode(self.FORMAT)
-                if request == SEND_TARGET_LIST:
+                request = watcher.recv_data()
+                if request == Actions.SEND_TARGET_LIST:
                     watcher.send_data(str(list(self.targets.keys()))
                         .encode(self.FORMAT))
                 # elif request == WATCH_BY_CODE:
@@ -321,7 +319,7 @@ class Server(Socket):
                 #     target.watchers += 1
                 #     target.status = TARGET_RUNNING
 
-                elif request == STOP_WATCHING:
+                elif request == Actions.STOP_WATCHING:
                     """
                         TODO: decrement target.watcher after 
                             screen_reader deletes itself
@@ -334,7 +332,7 @@ class Server(Socket):
                     """
                     sleep(2)
 
-                elif request == DISCONNECT or request == "":
+                elif request == Actions.DISCONNECT or request == b"":
                     watcher.socket.close()
                     self.remove_watcher(code)
 
@@ -373,7 +371,7 @@ class Server(Socket):
         target = self.targets[target_code]
         target.watchers += 1
         target.running = True
-        target.status = TARGET_RUNNING
+        target.status = Status.TARGET_RUNNING
 
         # wair for the target screen to connect
         while target_code not in self.target_screens:
@@ -460,10 +458,10 @@ class Server(Socket):
         """
             All kinds of controller requests are handled here.
         """
-        control_type = watcher.recv_data().decode(self.FORMAT)
+        control_type = watcher.recv_data()
 
         # handle mouse controller requests
-        if control_type == CONTROL_MOUSE:
+        if control_type == ControlDevice.CONTROL_MOUSE:
             mouse_event = watcher.recv_data()
             if target_code in self.target_controllers:
                 self.mouse_events[target_code].put(mouse_event)
