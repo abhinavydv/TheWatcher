@@ -6,9 +6,9 @@ from threading import Lock, Thread
 from Base.settings import SERVER_PORT, SERVER_ADDRESS, \
     ACKNOWLEDGEMENT_ITERATION
 from Base.constants import ControlEvents, Reasons, Actions, \
-    ClientTypes, ControlDevice, Status
+    ClientTypes, ControlDevice
 import logging
-from pynput.keyboard import Listener, Key, KeyCode
+from pynput.keyboard import Listener as KeyboardListener, Key, KeyCode
 from queue import Queue, Empty
 
 
@@ -212,13 +212,15 @@ class Controller(Socket):
         they all use `control_lock` (an object of `threading.Lock`).
     """
 
-    def __init__(self, target_code):
+    def __init__(self, target_code: str):
         super().__init__(SERVER_ADDRESS, SERVER_PORT)
         self.target_code = target_code
         self.control_lock = Lock()
         # self.keyboard_controller = KeyboardController(self.socket, 
         #     self.control_lock)
         self.mouse_controller = MouseController(self.socket, self.control_lock)
+        self.keyboard_controller = KeyboardController(self.socket, 
+            self.control_lock)
         self.watcher: Watcher = None
         self.config = Config()
 
@@ -241,7 +243,6 @@ class Controller(Socket):
             return
         logging.info("Connected to server")
 
-        self.mouse_controller.start()
         try:
             self.send_data(ClientTypes.WATCHER_CONTROLLER)
             self.send_data(self.config.code.encode(self.FORMAT))
@@ -253,6 +254,9 @@ class Controller(Socket):
             self.stop()
             return
 
+        self.mouse_controller.start()
+        self.keyboard_controller.start()
+
         self.running = True
         self.run()
 
@@ -262,7 +266,7 @@ class Controller(Socket):
             are called here at regular intervals after some small delay
         """
         while self.running:
-            # self.keyboard_controller.update()
+            self.keyboard_controller.update()
             self.mouse_controller.update()
             sleep(0.001)
             self.running = self.watcher.running
@@ -270,7 +274,7 @@ class Controller(Socket):
 
     def stop(self):
         self.running = False
-        # self.keyboard_controller.stop()
+        self.keyboard_controller.stop()
 
 
 class KeyboardController(Socket):
@@ -281,17 +285,61 @@ class KeyboardController(Socket):
     def __init__(self, skt: socket, control_lock: Lock) -> None:
         super().__init__(SERVER_ADDRESS, SERVER_PORT, skt)
 
-        # Format example: p345 (pressed code 345) r345 (released code 345)
         self.keys = Queue(0)
         self.control_lock = control_lock
 
-    def start(self):
+        # `_window_in_focus` and `_keyboard_on` to be set by GUI app
+        self._window_in_focus = True
+        self._keyboard_on = True
+
+        self._capture_keys = True
+
+    @property
+    def window_in_focus(self):
+        pass
+
+    @window_in_focus.setter
+    def window_in_focus(self, value: bool):
+        self._window_in_focus = value
+        self.capture_keys = self._window_in_focus and self._keyboard_on
+
+    @property
+    def keyboard_on(self):
+        pass
+
+    @keyboard_on.setter
+    def keyboard_on(self, value):
+        self._keyboard_on = value
+        self.capture_keys = self._window_in_focus and self._keyboard_on
+
+    @property
+    def capture_keys(self):
+        pass
+
+    @capture_keys.getter
+    def capture_keys(self):
+        return self._capture_keys
+
+    @capture_keys.setter
+    def capture_keys(self, value):
+        self._capture_keys = value
+        # self.stop()
+        # self.start(self._capture_keys)
+        if self.capture_keys:
+            self.start()
+        else:
+            self.stop()
+
+    def start(self, supress=None):
         """
             The key queue is updated every time a key is pressed.
             pynput keyboard listener is used.
         """
-        logging.info("Starting Keyboard Controller")
-        self.listener = Listener(on_press=self.on_press)
+        if supress is None:
+            logging.info("Starting Keyboard Controller")
+            supress = self.capture_keys
+        self.listener = KeyboardListener(on_press=self.on_press, 
+            on_release=self.on_release, suppress=supress)
         self.listener.start()
 
     def stop(self):
@@ -301,16 +349,30 @@ class KeyboardController(Socket):
         self.listener.stop()
 
     def on_press(self, key):
-        if isinstance(key, Key):
-            logging.debug((key.name, key.value))
-        elif isinstance(key, KeyCode):
-            logging.debug((key.vk, key.combining, key.char))
+        """
+            put `vk` value in self.keys
+        """
+        # logging.debug((self._window_in_focus, self._keyboard_on, self.capture_keys))
+        # print(self.listener.suppress, self.listener._suppress)
+        if self.capture_keys:
+            if isinstance(key, Key):
+                self.keys.put((ControlEvents.KEY_DOWN, key.value.vk))
+                # logging.debug((key.name, key.value.vk, 
+                #     key.value.combining, key.value.char))
+            elif isinstance(key, KeyCode):
+                self.keys.put((ControlEvents.KEY_DOWN, key.vk))
+                # logging.debug((key.vk, key.combining, key.char))
+            return True
 
     def on_release(self, key):
-        if isinstance(key, Key):
-            logging.debug(key.name, key.value)
-        elif isinstance(key, KeyCode):
-            logging.debug(key.vk, key.combining, key.char)
+        if self.capture_keys:
+            if isinstance(key, Key):
+                self.keys.put((ControlEvents.KEY_UP, key.value.vk))
+                # logging.debug((key.name, key.value))
+            elif isinstance(key, KeyCode):
+                self.keys.put((ControlEvents.KEY_UP, key.vk))
+                # logging.debug((key.vk, key.combining, key.char))
+            return True
 
     def update(self):
         """
@@ -318,9 +380,9 @@ class KeyboardController(Socket):
         """
         if not self.keys.empty():
             with self.control_lock:
-                self.send_data(ControlDevice.CONTROL_KEYBOARD)
-                keys = self.get_keys()
-                self.send_data(" ".join(keys).encode(self.FORMAT))
+                event = self.keys.get_nowait()
+                self.send_data(str((ControlDevice.CONTROL_KEYBOARD,
+                    *event)).encode(self.FORMAT))
 
     def get_keys(self):
         """
@@ -350,6 +412,21 @@ class MouseController(Socket):
         self.pos: Tuple[int, int] = (0, 0)
         self.control_lock = lock
         self.button_down = False
+        self._mouse_on = True
+        self.capture_events = True
+
+    @property
+    def mouse_on(self):
+        pass
+
+    @mouse_on.getter
+    def mouse_on(self):
+        return self._mouse_on
+
+    @mouse_on.setter
+    def mouse_on(self, value):
+        self._mouse_on = value
+        self.capture_events = self._mouse_on
 
     def start(self):
         pass
@@ -395,9 +472,10 @@ class MouseController(Socket):
                 sleep(0.001)
                 continue
             with self.control_lock:
-                self.send_data(ControlDevice.CONTROL_MOUSE)
-                self.send_data(str(event).encode(self.FORMAT))
-
+                self.send_data(str((ControlDevice.CONTROL_MOUSE, 
+                    *event)).encode(self.FORMAT))
+                # self.send_data(ControlDevice.CONTROL_MOUSE)
+                # self.send_data(str(event).encode(self.FORMAT))
 
     def stop(self):
         pass

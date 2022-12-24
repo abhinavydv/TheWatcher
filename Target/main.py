@@ -7,17 +7,19 @@ import logging
 import numpy as np
 from PIL import Image, ImageChops
 from pynput.mouse import Controller as MouseController, Button as MouseButton
+from pynput.keyboard import Controller as KeyController, KeyCode
 from queue import Queue, Empty
 import subprocess
 from threading import Thread
 from time import sleep, time
 import traceback
+from typing import List, Tuple
 
 
 try:
     from mss import mss
 except ImportError:
-    logging.info("Cannot import mss")
+    logging.warn("Cannot import mss")
 
 try:
     import gi
@@ -25,7 +27,7 @@ try:
     from gi.repository import Gdk
     from gi.overrides.GdkPixbuf import Pixbuf
 except:
-    logging.info("Cannot import gi")
+    logging.warn("Cannot import gi")
 
 
 class Target(Socket):
@@ -351,14 +353,16 @@ class Controller(Socket):
             Receive control requests and put them in corresponding
             queues based on `control_type`
         """
-        control_type = self.recv_data()
+        try:
+            ctrl_ev = self.recv_data()
+            control_type, *event = eval(ctrl_ev)
+        except (BrokenPipeError, ConnectionResetError, SyntaxError):
+            return False
 
         if control_type == ControlDevice.CONTROL_MOUSE:
-            event = self.recv_data()
             self.mouse.events.put(event)
-
-            # TODO: remove acknowledgement as it slows down communication #done
-            # self.send_data(b"OK")
+        elif control_type == ControlDevice.CONTROL_KEYBOARD:
+            self.keyboard.events.put(event)
         return True
 
     def run_update_loop(self):
@@ -379,18 +383,24 @@ class Controller(Socket):
 class Keyboard(object):
 
     def __init__(self) -> None:
-        # self.key_controller = KeyController()
-        pass
+        self.key_controller = KeyController()
+        self.events: Queue[List[int, int]] = Queue()
 
     def update(self):
-        pass
+        if self.events.empty():
+            return
+        ev_type, vk = self.events.get()
+        if ev_type == ControlEvents.KEY_DOWN:
+            self.key_controller.press(KeyCode.from_vk(vk))
+        elif ev_type == ControlEvents.KEY_UP:
+            self.key_controller.release(KeyCode.from_vk(vk))
 
 
 class Mouse(object):
 
     def __init__(self) -> None:
         self.mouse_controller = MouseController()
-        self.events = Queue()
+        self.events: Queue[List[int, str, Tuple]] = Queue()
         self.screen_size = self.get_screen_size()
         logging.debug(f"screen size: {self.screen_size}")
         self.btns = {
@@ -410,11 +420,7 @@ class Mouse(object):
         if self.events.empty():
             return
         self.screen_size = self.get_screen_size()
-        event = eval(self.events.get())
-        # logging.debug(str(event))
-        ev_type = event[0]
-        btn = event[1]
-        rel_pos = event[2]
+        ev_type, btn, rel_pos = self.events.get()
         pos = (
             rel_pos[0]*self.screen_size[0],
             (1-rel_pos[1])*self.screen_size[1]
@@ -425,7 +431,7 @@ class Mouse(object):
         elif ev_type == ControlEvents.MOUSE_UP:
             self.mouse_controller.release(self.btns[btn])
 
-    def get_clicks(self):
+    def get_events(self):
         """
             Fetches requests from queue and returns them as a list
         """

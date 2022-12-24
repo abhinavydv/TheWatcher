@@ -41,7 +41,7 @@ class Server(Socket):
         self.target_controllers: Dict[str, Socket] = {}
 
         # mapping for target and mouse events
-        self.mouse_events: Dict[str, Queue[bytes]] = {}
+        self.control_events: Dict[str, Queue[bytes]] = {}
 
         # access codes and sockets of all watchers
         self.watchers: Dict[str, Socket] = {}
@@ -250,17 +250,17 @@ class Server(Socket):
             target.socket.close()
             return False
         self.target_controllers[code] = target
-        self.mouse_events[code] = Queue(0)
+        self.control_events[code] = Queue(0)
         target.send_data(b"OK")
 
         running = True
         while running and self.running:
 
             try:
-                # handle mouse events
-                if not self.mouse_events[code].empty():
-                    target.send_data(ControlDevice.CONTROL_MOUSE)
-                    target.send_data(self.mouse_events[code].get())
+                # handle control events
+                if not self.control_events[code].empty():
+                    # target.send_data(ControlDevice.CONTROL_MOUSE)
+                    target.send_data(self.control_events[code].get())
                     # target.recv_data()    # reveive 'OK'
             except (BrokenPipeError, ConnectionResetError):
                 logging.info(f"Connection to target controller client {code} "
@@ -441,7 +441,10 @@ class Server(Socket):
                 if target_code not in self.targets:
                     watcher.socket.close()
                     break
-                self.handle_watcher_controllers(watcher, target_code)
+                # self.handle_watcher_controllers(watcher, target_code)
+                event = watcher.recv_data()
+                if target_code in self.control_events:
+                    self.control_events[target_code].put(event)
             except (BrokenPipeError, ConnectionResetError):
                 logging.debug("Controller disconnected. Removing it and "
                     "stopping watching")
@@ -454,19 +457,19 @@ class Server(Socket):
                 watcher.socket.close()
                 break
 
-    def handle_watcher_controllers(self, watcher: Socket, target_code):
-        """
-            All kinds of controller requests are handled here.
-        """
-        control_type = watcher.recv_data()
+    # def handle_watcher_controllers(self, watcher: Socket, target_code):
+    #     """
+    #         All kinds of controller requests are handled here.
+    #     """
+    #     # control_type = watcher.recv_data()
 
-        # handle mouse controller requests
-        if control_type == ControlDevice.CONTROL_MOUSE:
-            mouse_event = watcher.recv_data()
-            if target_code in self.target_controllers:
-                self.mouse_events[target_code].put(mouse_event)
+    #     # handle controller requests
+    #     # if control_type == ControlDevice.CONTROL_MOUSE:
+    #     event = watcher.recv_data()
+    #     if target_code in self.target_controllers:
+    #         self.control_events[target_code].put(event)
 
-        # watcher.send_data(b"OK")
+    #     # watcher.send_data(b"OK")
 
     def start_file_server(self, path):
         """

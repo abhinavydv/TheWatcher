@@ -64,6 +64,7 @@ class Autostart(object):
 
 
 if __name__ == "__main__":
+    os.chdir(os.path.dirname(__file__))
     os.system(f"setsid bash main_wrapper.sh >/dev/null 2>&1 < /dev/null &")
 
     Autostart().check_and_configure()

@@ -1,12 +1,18 @@
 from typing import Type
 
+
 def bytes_enum(cls: Type) -> Type:
     """
         Convert all constant `int` values from `cls` to `bytes`
         and return a new class having these `bytes` values.
         All constants in `cls` should be of type `int` and from 0 to 255
     """
-    for i in filter(lambda x: x.isupper(), dir(cls)):
+    constant_attrs = list(filter(lambda x: x.isupper(), dir(cls)))
+    values = set(map(lambda attr: getattr(cls, attr), constant_attrs))
+    if len(values) != len(constant_attrs):
+        raise ValueError("All values in enum should be unique")
+
+    for i in constant_attrs:
         num: int = getattr(cls, i)
         if not isinstance(num, int):
             raise Exception(f"Expected constant to be 'int' "
@@ -67,3 +73,6 @@ class ControlEvents:
     MOUSE_UP = 0x0
     MOUSE_DOWN = 0x1
     MOUSE_MOVE = 0x2
+
+    KEY_UP = 0x10
+    KEY_DOWN = 0x11

@@ -11,6 +11,7 @@ from watcher import Watcher
 from kivy.clock import Clock
 from kivy.core.image import Image as CoreImage
 from kivy.core.window import Window
+from kivy.core.window.window_sdl2 import WindowSDL
 from kivy.input.providers.mouse import MouseMotionEvent
 from kivy.lang import Builder
 from kivy.properties import BooleanProperty, ObjectProperty
@@ -26,6 +27,7 @@ from kivymd.toast import toast
 
 
 Builder.load_file("controllerscreen.kv")
+Window: WindowSDL
 
 
 class ControllerScreen(Screen):
@@ -83,6 +85,10 @@ class ControllerScreen(Screen):
         self.running = True
         self.run_schedule = Clock.schedule_interval(self.run, 0.05)
         Window.bind(mouse_pos=self.on_pointer_move)
+        Window.bind(focus=self.on_focus_change)
+
+    def on_focus_change(self, _, value):
+        self.watcher.controller.keyboard_controller.window_in_focus = value
 
     def on_touch_down(self, touch: MouseMotionEvent):
         """
@@ -136,9 +142,11 @@ class ControllerScreen(Screen):
         if self.watcher.watching:
             self.watcher.stop_watching()
         Window.unbind(mouse_pos=self.mouse_controller.update_mouse_pos)
+        Window.unbind(focus=self.on_focus_change)
 
     def close(self):
-        self.manager.remove_widget(self)
+        if self.manager is not None:
+            self.manager.remove_widget(self)
 
     def on_enter(self, *args):
         self.start()

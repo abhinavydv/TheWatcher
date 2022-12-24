@@ -18,10 +18,10 @@ import sys
 class Setup():
     def __init__(self):
         self.CACHE_DIR = "watcher"
-        self.CURR_DIR = os.path.abspath(".")  # save current directory
+        self.TARGET_DIR = os.path.abspath(os.path.dirname(__file__))  # save current directory
         self.python_version_number = (f"{sys.version_info.major}."
             f"{sys.version_info.minor}")
-        self.VIRTUALENV = (f"{os.path.dirname(self.CURR_DIR)}"
+        self.VIRTUALENV = (f"{os.path.dirname(self.TARGET_DIR)}"
             f"/.watchenv{self.python_version_number}")
         self.ENV_ACTIVATE_FILE = f"{self.VIRTUALENV}/bin/activate_this.py"
 
@@ -153,7 +153,7 @@ class Setup():
 
         os.chdir("..")
         os.system(f"rm -r {self.CACHE_DIR}")
-        os.chdir(self.CURR_DIR)
+        os.chdir(self.TARGET_DIR)
 
 
 if __name__ == "__main__":
