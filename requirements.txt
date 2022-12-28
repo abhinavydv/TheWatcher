@@ -1,4 +1,4 @@
 mss
 numpy
 Pillow
-pyautogui
+pynput

