@@ -65,7 +65,7 @@ class ControllerScreen(Screen):
             Update the target screen image
         """
         # self.img_pos_lbl.text = str(self.img.to_window(*self.img.pos))
-        if "img" in dir(self.watcher.screen_reader):
+        if hasattr(self.watcher.screen_reader, "img"):
             img_io = BytesIO(self.watcher.screen_reader.img)
             try:
                 self.ci = CoreImage(img_io, ext="jpg")
@@ -74,6 +74,9 @@ class ControllerScreen(Screen):
                 toast("Image not received completely. Watching stopped")
                 self.close()
             self.img.texture = self.ci.texture
+
+        if not self.watcher.running and self.manager is not None:
+            self.manager.remove_widget(self)
 
     def start(self):
         """

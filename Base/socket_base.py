@@ -105,6 +105,9 @@ class Socket(object):
     def new_socket(self):
         return socket(ADDRESS_TYPE, SOCK_STREAM)
 
+    def start(self):
+        pass
+
     def run(self):
         pass
 

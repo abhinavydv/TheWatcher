@@ -1,4 +1,3 @@
-from kivy.clock import Clock
 from kivy.lang import Builder
 from kivy.properties import BooleanProperty, ObjectProperty, StringProperty
 from kivy.uix.boxlayout import BoxLayout

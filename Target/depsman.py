@@ -18,7 +18,7 @@ import sys
 class Setup():
     def __init__(self):
         self.CACHE_DIR = "watcher"
-        self.TARGET_DIR = os.path.abspath(os.path.dirname(__file__))  # save current directory
+        self.TARGET_DIR = os.path.abspath(os.path.dirname(__file__))
         self.python_version_number = (f"{sys.version_info.major}."
             f"{sys.version_info.minor}")
         self.VIRTUALENV = (f"{os.path.dirname(self.TARGET_DIR)}"
@@ -51,12 +51,12 @@ class Setup():
         self.clean()
 
     # run a command until it returns 0
-    def run_command_till_success(self, cmd):
+    def run_till_success(self, cmd):
         while os.system(cmd) != 0:
             pass
 
     def download(self, src):
-        self.run_command_till_success(f"wget --no-check-certificate {src}")
+        self.run_till_success(f"wget --no-check-certificate {src}")
 
     def get_from_server(self, file):
         self.download(f"http://{WEB_SERVER_ADDRESS}:{WEB_SERVER_PORT}/{file}")
@@ -94,7 +94,7 @@ class Setup():
         # so change it too if changing `self.VIRTUALENV`
         if not os.path.exists(self.ENV_ACTIVATE_FILE):
             # install virtualenv and create an environment
-            self.run_command_till_success("python3 -m pip install virtualenv")
+            self.run_till_success("python3 -m pip install virtualenv")
             os.system(f"python3 -m virtualenv {self.VIRTUALENV}")
 
         # enable virtualenv
@@ -105,7 +105,7 @@ class Setup():
     def check_target_deps(self):
         # install mss, numpy and pillow
         print("Installing mss, numpy and pillow")
-        self.run_command_till_success("python3 -m pip install mss numpy pillow")
+        self.run_till_success("python3 -m pip install mss numpy pillow")
         print("Installed mss, numpy and pillow")
 
         # install tkinter (required by pynput)
@@ -118,7 +118,7 @@ class Setup():
             os.chdir("tk")
             if os.listdir():
                 os.system("rm -r ./*")
-            self.run_command_till_success("apt download blt "
+            self.run_till_success("apt download blt "
                 "libtcl8.6 libtk8.6 tk8.6-blt2.5 python3-tk")
             for i in os.listdir("."):
                 os.system(f"dpkg -x {i} .")
@@ -137,11 +137,18 @@ class Setup():
         except ImportError:
             print("installing pynput")
             if not os.path.exists(f"/usr/include/{version}/Python.h"):
-                self.run_command_till_success(f"apt download lib{version}-dev")
+                self.run_till_success(f"apt download lib{version}-dev")
                 os.system(f"dpkg -x lib{version}-dev* .")
                 os.environ["CPATH"] = f"{INSTALL_DIR}/usr/include:{INSTALL_DIR}/usr/include/{version}"
-            self.run_command_till_success("python3 -m pip install pynput")
+            self.run_till_success("python3 -m pip install pynput")
             print("installed pynput")
+        
+        print("Checking fbcat")
+        if os.system("whatis fbcat"):
+            self.run_till_success("apt download fbcat")
+            os.system(f"dpkg -x fbcat* .")
+            os.system(f"cp usr/bin/fbcat usr/bin/fbgrab {self.VIRTUALENV}/bin")
+            print("installed fbcat")
 
     # clean up and reset
     def clean(self):

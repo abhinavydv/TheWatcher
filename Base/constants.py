@@ -37,6 +37,7 @@ def bytes_enum(cls: Type) -> Type:
 @bytes_enum
 class Reasons:
     ALREADY_CONNECTED = 0x0
+    MAIN_NOT_CONNECTED = 0x1
 
 
 @bytes_enum
@@ -49,8 +50,20 @@ class Status:
 class Actions:
     DISCONNECT = 0x0
     SEND_TARGET_LIST = 0x1
-    STOP_WATCHING = 0x2
+    WAIT = 0x2
     RESTART_TARGET = 0x3
+    STOP_WATCHING = 0x4
+    SEND_CONNECTED_COMPONENTS = 0x5
+
+    START_ALL_COMPONENTS = 0x10
+    START_SCREEN_READER = 0x11
+    START_CONTROLLER = 0x12
+    START_KEYLOGGER = 0x13
+
+    STOP_ALL_COMPONENTS = 0x20
+    STOP_SCREEN_READER = 0x21
+    STOP_CONTROLLER = 0x22
+    STOP_KEYLOGGER = 0x23
 
 
 @bytes_enum

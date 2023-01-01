@@ -16,3 +16,6 @@ https://gist.github.com/thepaul/1206753
 
 ### start python file with windows start
 https://stackoverflow.com/questions/4438020/how-to-start-a-python-file-while-windows-starts
+
+### ptyprocess: Start a process in pseudoterminal
+https://ptyprocess.readthedocs.io/en/latest/api.html
