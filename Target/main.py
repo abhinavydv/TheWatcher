@@ -1,23 +1,26 @@
 from Base.constants import ImageSendModes, DeviceEvents, Reasons, \
-    ClientTypes, ControlDevice, Actions
+    ClientTypes, ControlDevice, Actions, Identity
 from Base.settings import ACKNOWLEDGEMENT_ITERATION, \
     SERVER_PORT, SERVER_ADDRESS, IMAGE_SEND_MODE
 from Base.socket_base import Socket, Config
 import itertools as it
+import json
 import logging
 from math import log
+import os
 from PIL import Image, ImageChops
 from pynput.mouse import Controller as MouseController, Button as MouseButton
 from pynput.keyboard import Controller as KeyController, Key, KeyCode, \
     Listener as KeyboardListener
 from queue import Queue, Empty
 from random import random
-from socket import SHUT_RDWR
+from socket import SHUT_RDWR, gethostname
 import subprocess
 from threading import Thread
 from time import sleep, time
 import traceback
 from typing import Dict, List, Tuple, Union
+from uuid import getnode
 
 
 try:
@@ -136,19 +139,16 @@ class Target(BaseTarget):
                 logging.info("Connecting")
                 self.connect()
                 logging.info("Connected")
-                # After the connection is established send type
+
                 self.send_data(ClientTypes.TARGET)
                 # Send unique code
                 self.send_data(self.config.code.encode(self.FORMAT))
-                data = b"WAIT"
-                logging.info("Waiting")
-                while data == b"WAIT":
-                    data = self.recv_data()
+                self.send_identity()
+                data = self.recv_data()
                 if data == Reasons.ALREADY_CONNECTED:
-                    logging.info("Stopping as another client with same target"
-                    " code is already connected")
-                    self.stop()
-                    return
+                    logging.info("Another client with same target"
+                    " code is already connected. Retrying in 2 seconds.")
+                    sleep(2)
                 elif data == b"OK":
                     while self.running:
                         data = self.recv_data()
@@ -179,7 +179,7 @@ class Target(BaseTarget):
                 logging.critical("Disconnected. Trying to reconnect in 2 sec")
                 sleep(2)
             except ConnectionRefusedError:
-                logging.critical("Connection refused")
+                logging.critical("Connection refused. Retrying in 2 sec")
                 sleep(2)
             except OSError:
                 logging.fatal(f"OSError Occured\n"
@@ -188,6 +188,31 @@ class Target(BaseTarget):
                 self.stop()
                 return
             sleep(1)
+
+    def send_identity(self):
+        user = os.getlogin().encode(self.FORMAT)
+        host = gethostname().encode(self.FORMAT)
+        platform = self.platform.encode(self.FORMAT)
+
+        # TODO: Handle the situation where sda is present in place of nvme0n1
+        hdd_serial = list(filter(lambda x: b"ID_SERIAL=" in x, subprocess.run(
+            ["udevadm", "info", "--query=all", "--name=/dev/nvme0n1"],
+            capture_output=True
+        ).stdout.split(b"\n")))[0].split(b"=")[1]
+        wifi_mac = getnode()  # handle the situation where no wifi is present
+        geolocation = subprocess.run(["curl", "-s", "ipinfo.io/loc"],
+                                     capture_output=True).stdout.strip()
+
+        identity = {
+            Identity.USER: user,
+            Identity.HOST: host,
+            Identity.PLATFORM: platform,
+            Identity.HDD_SERIAL: hdd_serial,
+            Identity.WIFI_MAC: wifi_mac,
+            Identity.GEOLOCATION: geolocation
+        }
+
+        self.send_data(json.dumps(identity).encode(self.FORMAT))
 
     def start(self):
         """

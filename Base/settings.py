@@ -7,7 +7,7 @@ if ADDRESS_TYPE == AF_INET6:
     SERVER_ADDRESS = getaddrinfo("watcher.centralindia.cloudapp.azure.com",
                                  None)[0][4][0]
 elif ADDRESS_TYPE == AF_INET:
-    SERVER_ADDRESS = "localhost"
+    SERVER_ADDRESS = "192.168.1.102"
 else:
     raise ValueError(f"Undefined Address type '{ADDRESS_TYPE}'")
 SERVER_PORT = 11419

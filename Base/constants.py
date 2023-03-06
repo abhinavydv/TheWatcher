@@ -93,7 +93,16 @@ class ImageSendModes:
     CHANGES = 0x2     # send the changed areas of image
 
 
-# not making this as bytes_enum as that would make transmitted message longer
+# not making the ones below as bytes_enum as that would make transmitted message longer
+class Identity:
+    USER = 0x0
+    HOST = 0x1
+    PLATFORM = 0x2
+    HDD_SERIAL = 0x3
+    WIFI_MAC = 0x4
+    GEOLOCATION = 0x5
+
+
 class DeviceEvents:
     MOUSE_UP = 0x0
     MOUSE_DOWN = 0x1

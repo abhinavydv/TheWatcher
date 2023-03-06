@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import errno
 from http.server import SimpleHTTPRequestHandler
 from io import BytesIO
+import json
 from queue import Queue
 import logging
 from PIL import Image, ImageChops, UnidentifiedImageError
@@ -136,7 +137,12 @@ class Server(BaseSocket):
             again and waits.
         """
         logging.info("Main Target client connected")
-        code = client.recv_data().decode(self.FORMAT)
+        try:
+            code = client.recv_data().decode(self.FORMAT)
+            identity = json.loads(client.recv_data().decode(self.FORMAT))
+        except (ConnectionResetError, BrokenPipeError):
+            logging.info(f"Main target client {code} disconnected")
+            return
 
         # don't allow two target clients with same code to connect
         if code in self.targets:
@@ -147,10 +153,10 @@ class Server(BaseSocket):
             return
         client.code = code
         client.running = True
-        client.status = Status.TARGET_WAITING
+        # client.status = Status.TARGET_WAITING
         # self.main_targets[code] = client
         lock = Lock()
-        target = Client(code, client, lock=lock)
+        target = Client(code, client, identity=identity, lock=lock)
         self.targets[code] = target
         try:
             client.send_data(b"OK")
@@ -660,6 +666,7 @@ class Client(object):
     screen_reader: Socket = None
     keylogger: Socket = None
     controller: Socket = None
+    identity: Dict[int, bytes] = None
     lock: Lock = None
 
 

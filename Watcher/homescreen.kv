@@ -34,9 +34,8 @@
                 width: dp(400)
                 font_size: sp(30)
                 md_bg_color: (1, 0, 0) if root.running else (0, 1, 0)
-                # type: "large"
+                # type: "small"
                 pos_hint: {'center_x': 0.5,'center_y': 0.5}
-                # background_color: (1, 0, 0) if root.running else (0, 1, 0)
                 on_release:
                     root.stop() if root.running else root.start()
             MDLabel:
