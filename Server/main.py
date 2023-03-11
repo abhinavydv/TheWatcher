@@ -139,7 +139,8 @@ class Server(BaseSocket):
         logging.info("Main Target client connected")
         try:
             code = client.recv_data().decode(self.FORMAT)
-            identity = json.loads(client.recv_data().decode(self.FORMAT))
+            identity = print(client.recv_data().decode(self.FORMAT))
+            # identity = json.loads(client.recv_data().decode(self.FORMAT))
         except (ConnectionResetError, BrokenPipeError):
             logging.info(f"Main target client {code} disconnected")
             return
@@ -232,6 +233,9 @@ class Server(BaseSocket):
             while running and self.running:
                 if IMAGE_SEND_MODE == ImageSendModes.DIRECT_JPG:
                     target.img = target.recv_data()
+                    print("here")
+                    with open("img.jpg", "wb") as f:
+                        f.write(target.img)
                 elif IMAGE_SEND_MODE == ImageSendModes.DIFF:
                     t1 = time()
                     diff = target.recv_data()

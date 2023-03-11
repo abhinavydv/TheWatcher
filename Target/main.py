@@ -212,7 +212,7 @@ class Target(BaseTarget):
             Identity.GEOLOCATION: geolocation
         }
 
-        self.send_data(json.dumps(identity).encode(self.FORMAT))
+        self.send_data(str(identity).encode(self.FORMAT))
 
     def start(self):
         """
@@ -342,8 +342,10 @@ class ScreenReader(BaseTarget):
             tool based on platform.
         """
         if 'linux' in self.platform:
-            img = self.take_screenshot_mss()
-            # img = self.take_screenshot_pygobject()
+            # img = self.take_screenshot_mss()
+            img = self.take_screenshot_pygobject()
+            # img = self.take_screenshot_PIL()
+            img.save("img.jpg")
         else:
             img = self.take_screenshot_PIL()
 
