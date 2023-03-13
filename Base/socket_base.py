@@ -4,6 +4,9 @@ import json
 import logging
 import platform
 from typing import Tuple
+import os
+from uuid import getnode
+from hashlib import sha256
 
 
 root = logging.getLogger()
@@ -18,13 +21,26 @@ root.setLevel(logging.DEBUG)
 
 
 class Config:
-    """Contains configurations from config.json
+    """
+    Contains configurations from config.json
     """
     def __init__(self):
+        if not os.path.exists("config.json"):
+            with open("config.json", "w") as f:
+                json.dump({
+                    "code": self.gen_code(),
+                    "IMG_FORMAT": "PNG"
+                }, f)
+
         with open("config.json", "r") as f:
             self.config = json.load(f)
         self.code: str = self.config["code"]
-        self.IMG_FORMAT: str = self.config["IMG_FORMAT"]
+        self.IMG_FORMAT: str = "PNG"
+
+    def gen_code(self):
+        plt = platform.platform().lower()
+        wifi_mac = str(getnode())
+        return sha256((plt+wifi_mac).encode("utf-8")).hexdigest()
 
 
 class Socket(object):

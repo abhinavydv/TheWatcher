@@ -559,14 +559,17 @@ class KeyLogger(BaseWatcher):
 
         self.key_to_name = {key: str(key).split(".")[-1] for key in Key}
 
-        from pynput.keyboard._xorg import Listener
-        from pynput._util.xorg_keysyms import KEYSYMS, SYMBOLS
-        self.SPECIAL_KEYS = Listener._SPECIAL_KEYS.copy()
-        self.KEYPAD_KEYS: dict[int, KeyCode] = Listener._KEYPAD_KEYS.copy()
-        self.SPECIAL_KEYS.pop(Key.space.value.vk)
+        if "linux" in self.platform:
+            from pynput.keyboard._xorg import Listener
+            from pynput._util.xorg_keysyms import KEYSYMS, SYMBOLS
+            self.KEYPAD_KEYS: dict[int, KeyCode] = Listener._KEYPAD_KEYS.copy()
+            self.KEYSYMS = KEYSYMS
+            self.SYMBOLS = SYMBOLS
+        elif "windows" in self.platform:
+            from pynput.keyboard._win32 import Listener
 
-        self.KEYSYMS = KEYSYMS
-        self.SYMBOLS = SYMBOLS
+        self.SPECIAL_KEYS = Listener._SPECIAL_KEYS.copy()
+        self.SPECIAL_KEYS.pop(Key.space.value.vk)
 
     def reset(self):
         self.socket.close()

@@ -1,3 +1,4 @@
 mss
 Pillow
 pynput
+kivymd
