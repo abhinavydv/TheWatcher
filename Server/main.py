@@ -41,7 +41,7 @@ class Server(BaseSocket):
     """
 
     def __init__(self):
-        super().__init__(SERVER_ADDRESS, SERVER_PORT)
+        super().__init__("0.0.0.0", SERVER_PORT)
 
         self.running = False
 
@@ -657,7 +657,7 @@ class Server(BaseSocket):
         def Handler(*args, **kwargs):
             SimpleHTTPRequestHandler(*args, directory=path, **kwargs)
 
-        with CustomTCPServer((WEB_SERVER_ADDRESS, WEB_SERVER_PORT),
+        with CustomTCPServer(("0.0.0.0", WEB_SERVER_PORT),
                              Handler) as server:
             self.file_server_running = True
             self.file_server = server

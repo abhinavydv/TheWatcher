@@ -391,7 +391,7 @@ class KeyboardController(Socket):
             The key queue is updated every time a key is pressed.
             pynput keyboard listener is used.
         """
-        logging.info("Starting Keyboard Controller")
+        logging.debug("Starting Keyboard Controller")
         self.running = True
         if supress is None:
             supress = self.capture_keys
@@ -407,9 +407,10 @@ class KeyboardController(Socket):
         if self.running:
             self.running = False
             self.listener.stop()
-            logging.info("Stopped Keyboard Controller")
+            logging.debug("Stopped Keyboard Controller")
 
-    def on_press(self, key: Key | KeyCode | None):
+    def on_press(self, key):
+    # def on_press(self, key: Key | KeyCode | None):
         """
             put `vk` value in self.keys
         """
@@ -606,7 +607,8 @@ class KeyLogger(BaseWatcher):
 
         self.stop()
 
-    def parse_vk(self, vk) -> LoggedKey | None:
+    def parse_vk(self, vk):
+    # def parse_vk(self, vk) -> LoggedKey | None:
         """
         Parse the `vk` to get key name and/or its character
         representation if available.

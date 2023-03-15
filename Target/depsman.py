@@ -134,15 +134,18 @@ class Setup():
         try:
             # this will raise ImportError if tkinter not installed
             import pynput as _
+            print("pynput is present")
         except ImportError:
             print("installing pynput")
             if not os.path.exists(f"/usr/include/{version}/Python.h"):
                 self.run_till_success(f"apt download lib{version}-dev")
+                self.run_till_success("apt download linux-headers-$(uname -r)")
                 os.system(f"dpkg -x lib{version}-dev* .")
+                os.system(f"dpkg -x linux-headers-$(uname -r)* .")
                 os.environ["CPATH"] = f"{INSTALL_DIR}/usr/include:{INSTALL_DIR}/usr/include/{version}"
             self.run_till_success("python3 -m pip install pynput")
             print("installed pynput")
-        
+
         print("Checking fbcat")
         if os.system("whatis fbcat"):
             self.run_till_success("apt download fbcat")
