@@ -135,4 +135,6 @@ Test
 Target.zip
 
 Watcher/Logs/
-Build
+Build/dist
+Build/build
+.buildenv*
