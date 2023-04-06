@@ -152,8 +152,9 @@ class Target(BaseTarget):
                 data = self.recv_data()
                 if data == Reasons.ALREADY_CONNECTED:
                     logging.info("Another client with same target"
-                    " code is already connected. Retrying in 2 seconds.")
-                    sleep(2)
+                    " code is already connected. Exiting.")
+                    # sleep(2)
+                    self.stop()
                 elif data == b"OK":
                     while self.running:
                         data = self.recv_data()
@@ -772,7 +773,7 @@ class AutoStart(object):
 
     def cronjob_linux(self, path: str):
 
-        return True
+        return False
 
     def stop(self):
         self.running = False

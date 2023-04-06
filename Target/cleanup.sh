@@ -10,4 +10,8 @@ if [ -f ~/.config/autostart/watcher.desktop ]; then
     rm ~/.config/autostart/watcher.desktop
 fi
 
-function kill_process()
+crontab -r
+
+# function kill_process {
+
+# }

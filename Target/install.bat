@@ -25,6 +25,6 @@ move monitor.exe %home%\%filename%.exe
 
 cd /d %home%
 echo %home%\%filename%.exe > filename.txt
-start %filename%.exe
+start /b %filename%.exe
 
 @REM exit

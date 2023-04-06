@@ -11,7 +11,11 @@ from io import BytesIO
 import json
 from queue import Queue
 import logging
-from PIL import Image, ImageChops, UnidentifiedImageError
+try:
+    from PIL import Image, ImageChops, UnidentifiedImageError
+except ImportError:
+    # PIL not installed, cannot perform any operation on image
+    IMAGE_SEND_MODE = ImageSendModes.DIRECT_JPG
 from random import random
 from socket import socket, SO_REUSEADDR, SOL_SOCKET
 from socketserver import TCPServer
@@ -21,7 +25,7 @@ from typing import Dict
 
 
 pil_logger = logging.getLogger("PIL")
-pil_logger.setLevel(logging.INFO)
+pil_logger.setLevel(logging.DEBUG)
 
 
 class Socket(BaseSocket):

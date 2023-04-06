@@ -9,8 +9,13 @@ from uuid import getnode
 from hashlib import sha256
 
 
+formatter = logging.Formatter('[%(asctime)s] - %(name)s - '
+    '[%(levelname)s] - %(message)s')
+fl = logging.FileHandler("watcher.log")
+fl.setFormatter(formatter)
 root = logging.getLogger()
 root.setLevel(logging.DEBUG)
+root.addHandler(fl)
 
 # handler = logging.StreamHandler(sys.stdout)
 # handler.setLevel(logging.DEBUG)

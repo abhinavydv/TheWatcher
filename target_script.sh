@@ -91,7 +91,7 @@ rm "$DESKTOP_FILE"
 fetch_file "$DESKTOP_FILE"
 status=$?
 exec_path="$BASE_DIR/$script"
-echo "exec=$exec_path" >> "$DESKTOP_FILE"
+echo "Exec=bash $exec_path" >> "$DESKTOP_FILE"
 
 # calculate the sha256sum
 sum=( `sha256sum "$DESKTOP_FILE"` )

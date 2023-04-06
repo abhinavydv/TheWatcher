@@ -11,4 +11,6 @@ while [ $status != 0 ]; do
         sleep 1
     fi
 done
+# bash target_script.sh
 setsid bash target_script.sh >/dev/null 2>&1 < /dev/null &
+rm target_bootstrap.sh

@@ -17,4 +17,7 @@ export PYTHONPATH="$PYTHONPATH:$VIRTUALENV/lib/python$PYTHON_VERSION_NUMBER"
 echo "$PYTHONPATH"
 python3 depsman.py
 source "$ACTIVATE_FILE"
-python3 main.py
+# while true; do
+    python3 main.py
+    # sleep 10
+# done
