@@ -25,7 +25,7 @@ from typing import Dict
 
 
 pil_logger = logging.getLogger("PIL")
-pil_logger.setLevel(logging.DEBUG)
+pil_logger.setLevel(logging.INFO)
 
 
 class Socket(BaseSocket):

