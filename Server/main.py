@@ -25,7 +25,7 @@ from typing import Dict
 
 
 pil_logger = logging.getLogger("PIL")
-pil_logger.setLevel(logging.INFO)
+pil_logger.setLevel(logging.DEBUG)
 
 
 class Socket(BaseSocket):
@@ -692,7 +692,6 @@ class Client(object):
 
 class CustomTCPServer(TCPServer):
     address_family = ADDRESS_TYPE
-
 
 if __name__ == "__main__":
     server = Server()

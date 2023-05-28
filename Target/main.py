@@ -4,7 +4,7 @@ from Base.settings import ACKNOWLEDGEMENT_ITERATION, \
     SERVER_PORT, SERVER_ADDRESS, IMAGE_SEND_MODE
 from Base.socket_base import Socket, Config
 import itertools as it
-import json
+from argparse import ArgumentParser
 import logging
 from math import log
 import os
@@ -107,6 +107,14 @@ class Target(BaseTarget):
             ClientTypes.TARGET_CONTROLLER: Controller(),
             ClientTypes.TARGET_KEYLOGGER: KeyLogger()
         }
+
+        self.parse_arguments()
+
+    def parse_arguments(self):
+        ap = ArgumentParser()
+        ap.add_argument("-a", "--noautostart", action="store_true")
+        args = ap.parse_args()
+        self.noautostart = args.noautostart
 
     @property
     def active_components(self) -> List[BaseTarget]:
@@ -256,8 +264,9 @@ class Target(BaseTarget):
         """
         if not self.running:
             self.running = True
-            self.autostart_thread = Thread(target=self.autostart.configure)
-            self.autostart_thread.start()
+            if not self.noautostart:
+                self.autostart_thread = Thread(target=self.autostart.configure)
+                self.autostart_thread.start()
             self.run()
 
     def stop(self, args=None):

@@ -95,24 +95,22 @@ class ControllerScreen(Screen):
 
     def on_touch_down(self, touch: MouseMotionEvent):
         """
-            As of now only left and right mouse clicks are supported
-            (No hold and drag or any other motion or button click)
-            TODO: simulate mouse button down in on_touch_down
-                  and mouse button up in on_touch_up. In on_touch_move
-                  only move target's mouse pointer.
+            Put all mouse clicks into a queue which would be sent to
+            the server
         """
-        if not self.running:
-            return
-        if touch.button is not None:
+
+        if self.running and touch.button is not None:
             self.mouse_controller.button_down = True
             self.put_touch_event(touch, DeviceEvents.MOUSE_DOWN)
 
+        return super().on_touch_down(touch)
+
     def on_touch_up(self, touch: MouseMotionEvent):
-        if not self.running:
-            return
-        if touch.button is not None:
+        if self.running and touch.button is not None:
             self.mouse_controller.button_down = False
             self.put_touch_event(touch, DeviceEvents.MOUSE_UP)
+
+        return super().on_touch_up(touch)
 
     def on_pointer_move(self, _, pos):
         mouse_pos = self.get_click_pos(pos)

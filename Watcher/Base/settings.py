@@ -21,7 +21,7 @@ for addr in addresses:
     if addr[0] == ADDRESS_TYPE:
         SERVER_ADDRESS = addr[4][0] # address of the server
 
-SERVER_PORT = 5432      # port of the server running
+SERVER_PORT = 11419      # port of the server running
 WEB_SERVER_ADDRESS = SERVER_ADDRESS # address of the file server
 WEB_SERVER_PORT = 8080  # port of the file server
 
