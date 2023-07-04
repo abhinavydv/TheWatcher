@@ -567,6 +567,8 @@ class Keyboard(object):
 
 class Mouse(object):
 
+    screen = None
+
     def __init__(self) -> None:
         self.mouse_controller = MouseController()
         self.events: Queue[List[int, str, Tuple]] = Queue()
@@ -617,25 +619,27 @@ class Mouse(object):
                 break
         return clicks
 
-    @staticmethod
-    def get_screen_size():
+    @classmethod
+    def get_screen_size(cls):
         """
             Returns the resolution of the screen
         """
         # return list(pg.size())
-        try:
-            m = mss()
-            mon = m.monitors[0]
-            return [mon['width'], mon['height']]
-        except NameError:   # mss not imported
-            cmd = ['xrandr']
-            cmd2 = ['grep', '*']
-            xrandr = subprocess.Popen(cmd, stdout=subprocess.PIPE)
-            grep = subprocess.Popen(cmd2, stdin=xrandr.stdout, 
-                stdout=subprocess.PIPE)
-            res, _ = grep.communicate()
-            resolution = res.split()[0].decode("utf-8")
-            return [int(i) for i in resolution.split('x')]
+        if cls.screen is None:
+            try:
+                m = mss()
+                mon = m.monitors[0]
+                cls.screen = [mon['width'], mon['height']]
+            except NameError:   # mss not imported
+                cmd = ['xrandr']
+                cmd2 = ['grep', '*']
+                xrandr = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+                grep = subprocess.Popen(cmd2, stdin=xrandr.stdout, 
+                    stdout=subprocess.PIPE)
+                res, _ = grep.communicate()
+                resolution = res.split()[0].decode("utf-8")
+                cls.screen = [int(i) for i in resolution.split('x')]
+        return cls.screen
 
 
 class KeyLogger(BaseTarget):

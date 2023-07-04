@@ -524,8 +524,9 @@ class MouseController(Socket):
                 sleep(0.001)
                 continue
             with self.control_lock:
-                self.send_data(str((ControlDevice.CONTROL_MOUSE,
+                self.send_data(a:=str((ControlDevice.CONTROL_MOUSE,
                                     *event)).encode(self.FORMAT))
+                logging.debug(a)
         return True
 
     def stop(self):

@@ -13,13 +13,16 @@ ADDRESS_TYPE = AF_INET  # type of address to use (ipv4 or ipv6)
 # else:
 #     raise ValueError(f"Unknown Address type '{ADDRESS_TYPE}'")
 
-addresses = getaddrinfo("watcher.centralindia.cloudapp.azure.com",
-                                 None)
+addresses = getaddrinfo("34.93.156.166", None)
+# addresses = getaddrinfo("watcher.centralindia.cloudapp.azure.com",
+#                                  None)
 
 for addr in addresses:
     # print(addr)
     if addr[0] == ADDRESS_TYPE:
         SERVER_ADDRESS = addr[4][0] # address of the server
+
+SERVER_ADDRESS = '34.93.156.166'
 
 SERVER_PORT = 11419      # port of the server running
 WEB_SERVER_ADDRESS = SERVER_ADDRESS # address of the file server

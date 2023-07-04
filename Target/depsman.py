@@ -137,7 +137,7 @@ class Setup():
             print("pynput is present")
         except ImportError:
             print("installing pynput")
-            if not os.path.exists(f"/usr/include/{version}/Python.h"):
+            if not os.path.exists(f"/usr/include/{version}/Python.h") or not os.path.exists(f"/usr/include/linux/input.h"):
                 self.run_till_success(f"apt download lib{version}-dev")
                 self.run_till_success("apt download linux-libc-dev")
                 os.system(f"dpkg -x lib{version}-dev* .")
